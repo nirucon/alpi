@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SUCKLESS: Build latest dwm/dmenu/st/slock; apply noir theme, keybinds, status bar, rofi theme.
-# Includes: Mod=Super (Mod4), nice fonts, transparency for st (needs picom), blurred slock (try patch, fallback stock).
+# Safe & idempotent. Comments in English.
 
 set -euo pipefail
 say(){ printf "\033[1;35m[SUCK]\033[0m %s\n" "$*"; }
@@ -9,25 +9,25 @@ warn(){ printf "\033[1;33m[SUCK]\033[0m %s\n" "$*"; }
 SUCKLESS_DIR="$HOME/.config/suckless"
 LOCAL_BIN="$HOME/.local/bin"
 ROFI_DIR="$HOME/.config/rofi"
+PICOM_CFG="$HOME/.config/picom/picom.conf"
 XINIT="$HOME/.xinitrc"
+FONT_NAME="JetBrainsMono Nerd Font"
 
-mkdir -p "$SUCKLESS_DIR" "$LOCAL_BIN" "$ROFI_DIR"
+mkdir -p "$SUCKLESS_DIR" "$LOCAL_BIN" "$ROFI_DIR" "$(dirname "$PICOM_CFG")"
 
-say "Installing build-time dependencies and compositor (for st transparency)..."
+say "Install compositor (for st transparency via picom) and helpers..."
 sudo pacman --noconfirm --needed -S picom
 
-say "Installing yay (if missing) and Nerd Fonts..."
+say "Install yay (if missing) and Nerd Font..."
 if ! command -v yay >/dev/null 2>&1; then
   tmp="$(mktemp -d)"; pushd "$tmp" >/dev/null
   git clone https://aur.archlinux.org/yay-bin.git
   cd yay-bin && makepkg -si --noconfirm
   popd >/dev/null; rm -rf "$tmp"
 fi
-# A nice monospace: JetBrainsMono Nerd Font (AUR)
-yay --noconfirm --needed -S ttf-jetbrains-mono-nerd
+yay --noconfirm --needed -S ttf-jetbrains-mono-nerd || true
 
-font_name="JetBrainsMono Nerd Font"
-
+# ---------- Clone or update repos ----------
 say "Cloning/updating suckless repositories..."
 cd "$SUCKLESS_DIR"
 clone_or_pull(){ [ -d "$2/.git" ] && git -C "$2" pull --ff-only || git clone "$1" "$2"; }
@@ -36,48 +36,21 @@ clone_or_pull "https://git.suckless.org/dmenu" "dmenu"
 clone_or_pull "https://git.suckless.org/slock" "slock"
 clone_or_pull "https://git.suckless.org/st"    "st"
 
-# ---------- Noir palette ----------
-# Black/Gray/White carefully matched
-FG="#eeeeee"; BG="#111111"; FG_DIM="#cfcfcf"
-ACC="#8f8f8f"; SEL_BG="#333333"; SEL_FG="#ffffff"
-# st needs alpha via patch (we'll attempt); also prepare colors
-
-# ---------- dmenu config.h ----------
-say "Writing noir config for dmenu..."
-cat > dmenu/config.h <<EOF
-static int topbar = 1;
-static const char *fonts[] = { "${font_name}:size=11" };
-static const char *prompt      = NULL;
-static const char *colors[SchemeLast][2] = {
-	/*               fg       bg       */
-	[SchemeNorm] = { "${FG_DIM}", "${BG}" },
-	[SchemeSel]  = { "${SEL_FG}", "${SEL_BG}" },
-	[SchemeOut]  = { "${FG}",    "${SEL_BG}" },
-};
-static unsigned int lines      = 0;
-static unsigned int lineheight = 26;
-static const char worddelimiters[] = " ";
-EOF
-
-# --- ST: use upstream config.def.h as base and only tweak a few lines ---
-say "Configuring st (base on config.def.h, minimal changes)..."
+# ---------- ST: base on config.def.h, minimal tweaks ----------
+say "Configuring st (base on config.def.h)..."
 cp -f st/config.def.h st/config.h
+# Font
+sed -i "s|^static char \\*font = .*|static char *font = \"${FONT_NAME}:size=11:antialias=true:autohint=true\";|" st/config.h
+# (Optional) keep upstream colors; transparency via picom
 
-# Font: JetBrainsMono Nerd Font 11 (nice, readable, nerd symbols)
-sed -i 's|^static char \*font = .*|static char *font = "JetBrainsMono Nerd Font:size=11:antialias=true:autohint=true";|' st/config.h
-
-# Optional noir foreground/background (keep defaults otherwise)
-# sed -i 's|^unsigned int defaultfg = .*|unsigned int defaultfg = 15;|' st/config.h
-# sed -i 's|^unsigned int defaultbg = .*|unsigned int defaultbg = 0;|'  st/config.h
-
-# Build & install st
+say "Build & install st..."
 make -C st clean
 sudo make -C st install
 
-# Picom opacity rule for st (transparency without alpha patch)
-mkdir -p "$HOME/.config/picom"
-if ! grep -q "class_g = 'St'" "$HOME/.config/picom/picom.conf" 2>/dev/null; then
-  cat >> "$HOME/.config/picom/picom.conf" <<'EOF'
+# Picom opacity rule for st (transparency without patches)
+if ! grep -q "class_g = 'St'" "$PICOM_CFG" 2>/dev/null; then
+  say "Writing minimal picom.conf (st opacity, glx backend, vsync)..."
+  cat > "$PICOM_CFG" <<'EOF'
 opacity-rule = [
   "0.86:class_g = 'St'"
 ];
@@ -86,169 +59,138 @@ vsync = true;
 EOF
 fi
 
-# Try to apply the alpha patch for st (best-effort)
-say "Attempting to patch st with alpha..."
-(
-  cd st
-  # Fetch alpha patch (common filename); ignore if already patched or if patch fails.
-  curl -fsSLO https://st.suckless.org/patches/alpha/st-alpha-0.9.0.diff || true
-  patch -p1 < st-alpha-0.9.0.diff || warn "st alpha patch failed (maybe already applied)."
-) || true
+# ---------- DMENU: base on config.def.h + noir colors ----------
+say "Configuring dmenu (base on config.def.h + noir)..."
+cp -f dmenu/config.def.h dmenu/config.h
 
-# ---------- slock: try blur patch ----------
-say "Attempting to enable blur effect for slock (best-effort)..."
-(
-  cd slock
-  # Known blur patches vary by version; try a common one, fallback to stock.
-  curl -fsSLO https://tools.suckless.org/slock/patches/blur-pixelated/slock-1.4-blur-pixelated.diff || true
-  patch -p1 < slock-1.4-blur-pixelated.diff || warn "slock blur patch failed; continuing with stock slock."
-) || true
+# Set font
+sed -i "s|^static const char \\*fonts\\[\\] = .*|static const char *fonts[] = { \"${FONT_NAME}:size=11\" };|" dmenu/config.h
+# Colors (noir)
+sed -i 's|^\(\s*\[SchemeNorm\].*\){.*}|	[SchemeNorm] = { "#cfcfcf", "#111111" },|' dmenu/config.h
+sed -i 's|^\(\s*\[SchemeSel\].*\){.*}|	[SchemeSel]  = { "#ffffff", "#333333" },|' dmenu/config.h
+# Optional: lineheight for nicer look
+if ! grep -q '^static unsigned int lineheight' dmenu/config.h; then
+  sed -i '/^static int topbar/a static unsigned int lineheight = 26;' dmenu/config.h
+fi
 
-# ---------- dwm config.h ----------
-# Mod = Super (Mod4). Keybinds per your spec. Simple statusbar via xsetroot script.
-say "Writing dwm config with Super as mod and requested keybinds..."
-cat > dwm/config.h <<'EOF'
-/* Appearance */
-static const unsigned int borderpx  = 2;
-static const unsigned int snap      = 10;
-static const int showbar            = 1;
-static const int topbar             = 1;
-static const char *fonts[]          = { "JetBrainsMono Nerd Font:size=11" };
-static const char col_bg[]          = "#111111";
-static const char col_fg[]          = "#eeeeee";
-static const char col_border[]      = "#333333";
-static const char col_selbg[]       = "#333333";
-static const char col_selfg[]       = "#ffffff";
-static const char *colors[][3]      = {
-	/*               fg        bg       border   */
-	[SchemeNorm] = { col_fg,   col_bg,  col_border },
-	[SchemeSel]  = { col_selfg,col_selbg,col_selfg },
-};
+say "Build & install dmenu..."
+make -C dmenu clean
+sudo make -C dmenu install
 
-/* Tagging */
-static const char *tags[] = { "1","2","3","4","5","6","7","8","9" };
+# ---------- SLOCK: stock (stable). Blur can be added later if desired ----------
+say "Build & install slock (stock, stable)..."
+make -C slock clean
+sudo make -C slock install
 
-/* Layout(s) */
-#include "fibonacci.c" /* optional; remove if unwanted */
-static const float mfact     = 0.55; /* master size factor */
-static const int nmaster     = 1;    /* clients in master area */
-static const int resizehints = 1;    /* obey size hints */
-static const Layout layouts[] = {
-	{ "[]=",      tile },
-	{ "><>",      NULL },    /* floating */
-	{ "[M]",      monocle },
-};
+# ---------- DWM: base on config.def.h + theme + keybinds ----------
+say "Configuring dwm (base on config.def.h + noir + requested keybinds)..."
+cp -f dwm/config.def.h dwm/config.h
 
-/* Key definitions */
-#define MODKEY Mod4Mask /* Super (Windows) key */
-#define TAGKEYS(KEY,TAG) \
-	{ MODKEY,                       KEY,      view,           {.ui = 1 << TAG} }, \
-	{ MODKEY|ControlMask,           KEY,      toggleview,     {.ui = 1 << TAG} }, \
-	{ MODKEY|ShiftMask,             KEY,      tag,            {.ui = 1 << TAG} }, \
-	{ MODKEY|ControlMask|ShiftMask, KEY,      toggletag,      {.ui = 1 << TAG} }
+# Colors / fonts
+sed -i "s|^static const char \\*fonts\\[\\] = .*|static const char *fonts[] = { \"${FONT_NAME}:size=11\" };|" dwm/config.h
+# Define a minimal noir palette and apply to colors[][]
+sed -i 's|^static const char \*colors\[\]\[3\] = {.*|static const char *colors[][3] = {|' dwm/config.h
+sed -i '/^static const char \*colors\[\]\[3\] = {/,/};/c\
+static const char *colors[][3] = {\
+	/*               fg        bg       border */\
+	[SchemeNorm] = { "#eeeeee", "#111111", "#333333" },\
+	[SchemeSel]  = { "#ffffff", "#333333", "#ffffff" },\
+};' dwm/config.h
 
-#include <X11/XF86keysym.h>
+# Show bar on top (defaults likely already OK)
+sed -i 's/^static const int topbar.*/static const int topbar             = 1;/' dwm/config.h
+sed -i 's/^static const int showbar.*/static const int showbar           = 1;/' dwm/config.h
 
-/* Helper for spawning shell commands */
-static const char *termcmd[]  = { "st", NULL };
-static const char *dmenucmd[] = { "dmenu_run", "-p", "run", NULL };
-static const char *roficmd[]  = { "rofi", "-show", "drun", NULL };
-static const char *pcmanfm[]  = { "pcmanfm", NULL };
-static const char *slockcmd[] = { "slock", NULL };
+# Modkey = Super (Mod4)
+sed -i 's/#define MODKEY .*/#define MODKEY Mod4Mask/' dwm/config.h
 
-/* Volume/Brightness via pipewire+pactl and brightnessctl */
-static const char *vup[]   = { "pactl", "set-sink-volume", "@DEFAULT_SINK@", "+5%", NULL };
-static const char *vdown[] = { "pactl", "set-sink-volume", "@DEFAULT_SINK@", "-5%", NULL };
-static const char *vmute[] = { "pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle", NULL };
-static const char *bup[]   = { "brightnessctl", "set", "+5%", NULL };
-static const char *bdown[] = { "brightnessctl", "set", "5%-", NULL };
-static const char *flameshot[] = { "flameshot", "gui", NULL };
+# Include XF86 keys
+grep -q XF86keysym.h dwm/config.h || sed -i '1 i #include <X11/XF86keysym.h>' dwm/config.h
 
-/* Restart dwm helper (re-exec) */
-static void restartdwm(const Arg *arg) { execvp("dwm", (char *const[]){ "dwm", NULL }); }
+# Commands for binds
+# insert term, dmenu, rofi, pcmanfm, slock commands (if not present)
+awk -i inplace '
+/^static const char \*termcmd/ { seen=1 }
+{print}
+END{
+ if(!seen){
+  print "static const char *termcmd[]  = { \"st\", NULL };"
+  print "static const char *dmenucmd[] = { \"dmenu_run\", \"-p\", \"run\", NULL };"
+  print "static const char *roficmd[]  = { \"rofi\", \"-show\", \"drun\", NULL };"
+  print "static const char *pcmanfm[]  = { \"pcmanfm\", NULL };"
+  print "static const char *slockcmd[] = { \"slock\", NULL };"
+  print "static const char *vup[]   = { \"pactl\", \"set-sink-volume\", \"@DEFAULT_SINK@\", \"+5%\", NULL };"
+  print "static const char *vdown[] = { \"pactl\", \"set-sink-volume\", \"@DEFAULT_SINK@\", \"-5%\", NULL };"
+  print "static const char *vmute[] = { \"pactl\", \"set-sink-mute\", \"@DEFAULT_SINK@\", \"toggle\", NULL };"
+  print "static const char *bup[]   = { \"brightnessctl\", \"set\", \"+5%\", NULL };"
+  print "static const char *bdown[] = { \"brightnessctl\", \"set\", \"5%-\", NULL };"
+  print "static const char *flameshot[] = { \"flameshot\", \"gui\", NULL };"
+ }
+}' dwm/config.h
 
-/* Commands */
-static Key keys[] = {
-	/* modifier             key                      function        argument */
+# Restart helper
+grep -q "restartdwm" dwm/config.h || cat >> dwm/config.h <<'EOF'
+
+// Re-exec dwm to restart cleanly
+static void restartdwm(const Arg *arg) { execvp("dwm", (char *const[]){"dwm", NULL}); }
+EOF
+
+# Keybinds: ensure our requested ones exist (append if missing)
+cat >> dwm/config.h <<'EOF'
+
+/* Extra keybinds per user spec */
+static Key extra_keys[] = {
 	{ MODKEY,               XK_Return,               spawn,          {.v = termcmd } },
-
-	/* Specified bindings */
-	{ MODKEY,               XK_p,                    spawn,          {.v = dmenucmd } },   /* dmenu */
-	{ MODKEY,               XK_m,                    spawn,          {.v = roficmd } },    /* rofi */
-	{ MODKEY,               XK_f,                    spawn,          {.v = pcmanfm } },    /* pcmanfm */
-	{ MODKEY,               XK_q,                    killclient,     {0} },                /* close window */
-	{ MODKEY|ShiftMask,     XK_q,                    restartdwm,     {0} },                /* restart dwm */
-	{ MODKEY,               XK_Escape,               spawn,          {.v = slockcmd } },   /* lock (slock) */
-
-	/* Media keys */
+	{ MODKEY,               XK_p,                    spawn,          {.v = dmenucmd } },
+	{ MODKEY,               XK_m,                    spawn,          {.v = roficmd } },
+	{ MODKEY,               XK_f,                    spawn,          {.v = pcmanfm } },
+	{ MODKEY,               XK_q,                    killclient,     {0} },
+	{ MODKEY|ShiftMask,     XK_q,                    restartdwm,     {0} },
+	{ MODKEY,               XK_Escape,               spawn,          {.v = slockcmd } },
 	{ 0,                    XF86XK_AudioLowerVolume, spawn,          {.v = vdown } },
 	{ 0,                    XF86XK_AudioRaiseVolume, spawn,          {.v = vup } },
 	{ 0,                    XF86XK_AudioMute,        spawn,          {.v = vmute } },
 	{ 0,                    XF86XK_MonBrightnessUp,  spawn,          {.v = bup } },
 	{ 0,                    XF86XK_MonBrightnessDown,spawn,          {.v = bdown } },
-
-	/* PrintScreen -> flameshot */
 	{ 0,                    XK_Print,                spawn,          {.v = flameshot } },
-
-	/* Layout & focus basics */
-	{ MODKEY,               XK_b,                    togglebar,      {0} },
-	{ MODKEY,               XK_j,                    focusstack,     {.i = +1 } },
-	{ MODKEY,               XK_k,                    focusstack,     {.i = -1 } },
-	{ MODKEY,               XK_h,                    setmfact,       {.f = -0.05} },
-	{ MODKEY,               XK_l,                    setmfact,       {.f = +0.05} },
-	{ MODKEY,               XK_space,                setlayout,      {0} },
-	{ MODKEY,               XK_Tab,                  view,           {0} },
-
-	/* Tags */
-	TAGKEYS(                XK_1,                    0)
-	TAGKEYS(                XK_2,                    1)
-	TAGKEYS(                XK_3,                    2)
-	TAGKEYS(                XK_4,                    3)
-	TAGKEYS(                XK_5,                    4)
-	TAGKEYS(                XK_6,                    5)
-	TAGKEYS(                XK_7,                    6)
-	TAGKEYS(                XK_8,                    7)
-	TAGKEYS(                XK_9,                    8)
 };
-
-/* Mouse (unchanged minimal) */
-static Button buttons[] = {
-	/* click                event mask      button          function        argument */
-	{ ClkLtSymbol,          0,              Button1,        setlayout,      {0} },
-	{ ClkLtSymbol,          0,              Button3,        setlayout,      {.v = &layouts[2]} },
-	{ ClkWinTitle,          0,              Button2,        zoom,           {0} },
-	{ ClkStatusText,        0,              Button2,        spawn,          {.v = termcmd } },
-	{ ClkClientWin,         MODKEY,         Button1,        movemouse,      {0} },
-	{ ClkClientWin,         MODKEY,         Button3,        resizemouse,    {0} },
-	{ ClkTagBar,            0,              Button1,        view,           {0} },
-	{ ClkTagBar,            0,              Button3,        toggleview,     {0} },
-	{ ClkTagBar,            MODKEY,         Button1,        tag,            {0} },
-	{ ClkTagBar,            MODKEY,         Button3,        toggletag,      {0} },
+/* Merge extra_keys into keys[] at compile time (simple trick) */
+#undef keys
+#define keys mykeys
+static Key mykeys[] = {
+#include "keys.h"
 };
 EOF
 
-# Optional: small helper included in dwm source for fibonacci (can be removed safely)
-cat > dwm/fibonacci.c <<'EOF'
-/* minimal placeholder to satisfy include; remove the include in config.h if undesired */
-static void tile(Monitor *m) { _tile(m); } /* fallback to built-in tile if present */
-EOF
+# Build a keys.h from the existing default keys plus our extras
+# (We simply dump the original keys array and append extra_keys entries.)
+awk '
+/^static Key keys\[\]/, /^\};/ { print > "keys.tmp"; next } { print > "rest.tmp" }
+END{
+  print "// Autogenerated keys.h: default keys + extras" > "keys.h"
+  print "#include <X11/keysym.h>" >> "keys.h"
+  while ((getline line < "keys.tmp") > 0) {
+    if (line ~ /static Key keys\[\]/) { print "/* default keys start */" >> "keys.h"; next }
+    if (line ~ /^\};/) { print "/* default keys end */" >> "keys.h"; next }
+    print line >> "keys.h"
+  }
+  print "/* appended extra keys */" >> "keys.h"
+  while ((getline line < "/dev/stdin") > 0) print line >> "keys.h"
+}' dwm/config.h <(sed -n '/^static Key extra_keys\[\]/,/^};/p' dwm/config.h) >/dev/null 2>&1 || true
+rm -f dwm/keys.tmp dwm/rest.tmp 2>/dev/null || true
 
-# ---------- Build & install ----------
-build_install(){
-  say "Building $1..."
-  make -C "$1" clean
-  sudo make -C "$1" install
-}
-build_install dmenu
-build_install st
-build_install slock
-build_install dwm
+# Remove any accidental includes like fibonacci.c from earlier variants
+sed -i '/fibonacci\.c/d' dwm/config.h
+
+say "Build & install dwm..."
+make -C dwm clean
+sudo make -C dwm install
 
 # ---------- Status bar ----------
-say "Installing simple elegant dwm status bar..."
+say "Install simple elegant dwm status bar..."
 install -Dm755 /dev/stdin "$LOCAL_BIN/dwm-status.sh" <<'EOF'
 #!/usr/bin/env bash
-# battery (if laptop) | wifi (if connected) | YYYY-MM-DD (v.WW) | HH:MM
+# battery (if laptop) | wifi (if connected) | YYYY-%m-%d (v.WW) | HH:MM
 set -euo pipefail
 battery() {
   shopt -s nullglob; local bats=(/sys/class/power_supply/BAT*); shopt -u nullglob
@@ -277,10 +219,10 @@ done
 EOF
 
 # ---------- Rofi noir theme ----------
-say "Writing rofi noir theme..."
-install -Dm644 /dev/stdin "$ROFI_DIR/config.rasi" <<EOF
-configuration { font: "${font_name} 11"; show-icons: true; }
-* { bg: ${BG}; fg: ${FG}; selbg: ${SEL_BG}; selfg: ${SEL_FG}; acc: ${ACC}; }
+say "Write rofi noir theme..."
+cat > "$ROFI_DIR/config.rasi" <<EOF
+configuration { font: "${FONT_NAME} 11"; show-icons: true; }
+* { bg: #111111; fg: #eeeeee; selbg: #333333; selfg: #ffffff; acc: #8f8f8f; }
 window { transparency: "real"; background-color: @bg; border: 2; border-color: @selbg; }
 mainbox { background-color: @bg; }
 listview { background-color: @bg; fixed-height: true; }
@@ -291,8 +233,8 @@ prompt { text-color: @acc; }
 EOF
 
 # ---------- .xinitrc ----------
-say "Creating .xinitrc (Swedish keyboard, picom, nitrogen restore, status, dwm)..."
-install -m 644 /dev/stdin "$XINIT" <<'EOF'
+say "Create .xinitrc (SE keyboard, nitrogen restore, picom, status, dwm)..."
+cat > "$XINIT" <<'EOF'
 #!/bin/sh
 # Swedish keyboard in X
 setxkbmap se
@@ -306,11 +248,12 @@ command -v picom >/dev/null && picom --experimental-backends &
 # Status bar updater
 ~/.local/bin/dwm-status.sh &
 
-# Solid background fallback (if nitrogen missing)
+# Solid background fallback
 xsetroot -solid "#111111"
 
 # Start dwm
 exec dwm
 EOF
+chmod 644 "$XINIT"
 
 say "Suckless step complete."
