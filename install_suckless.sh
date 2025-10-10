@@ -59,27 +59,32 @@ static unsigned int lineheight = 26;
 static const char worddelimiters[] = " ";
 EOF
 
-# ---------- st config.h (noir + alpha) ----------
-say "Preparing noir config for st (with alpha)..."
-cat > st/config.h <<'EOF'
-/* See LICENSE file for copyright and license details. */
-static char *font = "JetBrainsMono Nerd Font:size=11:antialias=true:autohint=true";
-static int borderpx = 12;
-static unsigned int alpha = 220; /* 0..255 (needs alpha patch + compositor) */
-static char *termname = "st-256color";
-unsigned int tabspaces = 8;
-/* Colors (noir) */
-static const char *colorname[] = {
-  "#111111", "#ff5555", "#50fa7b", "#f1fa8c",
-  "#bd93f9", "#ff79c6", "#8be9fd", "#bbbbbb",
-  "#44475a", "#ff6e6e", "#69ff94", "#ffffa5",
-  "#d6b3ff", "#ff92d0", "#a4ffff", "#ffffff",
-};
-unsigned int defaultfg = 15;
-unsigned int defaultbg = 0;
-unsigned int defaultcs = 15;
-unsigned int defaultrcs = 8;
+# --- ST: use upstream config.def.h as base and only tweak a few lines ---
+say "Configuring st (base on config.def.h, minimal changes)..."
+cp -f st/config.def.h st/config.h
+
+# Font: JetBrainsMono Nerd Font 11 (nice, readable, nerd symbols)
+sed -i 's|^static char \*font = .*|static char *font = "JetBrainsMono Nerd Font:size=11:antialias=true:autohint=true";|' st/config.h
+
+# Optional noir foreground/background (keep defaults otherwise)
+# sed -i 's|^unsigned int defaultfg = .*|unsigned int defaultfg = 15;|' st/config.h
+# sed -i 's|^unsigned int defaultbg = .*|unsigned int defaultbg = 0;|'  st/config.h
+
+# Build & install st
+make -C st clean
+sudo make -C st install
+
+# Picom opacity rule for st (transparency without alpha patch)
+mkdir -p "$HOME/.config/picom"
+if ! grep -q "class_g = 'St'" "$HOME/.config/picom/picom.conf" 2>/dev/null; then
+  cat >> "$HOME/.config/picom/picom.conf" <<'EOF'
+opacity-rule = [
+  "0.86:class_g = 'St'"
+];
+backend = "glx";
+vsync = true;
 EOF
+fi
 
 # Try to apply the alpha patch for st (best-effort)
 say "Attempting to patch st with alpha..."
