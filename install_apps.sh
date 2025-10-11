@@ -38,7 +38,8 @@ PACMAN_PKGS=(
   materia-gtk-theme  # pcmanfm styling
   papirus-icon-theme # pcmanfm styling
   gimp               #
-  nextcloud-client   #
+  nextcloud-client   # sync stuff
+  mpv                #
 
   # Neovim + tooling (LazyVim deps)
   neovim
