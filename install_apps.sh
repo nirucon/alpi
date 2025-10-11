@@ -34,6 +34,7 @@ PACMAN_PKGS=(
   slop               #
   xclip              #
   dunst              # notify
+  libnotify          # notify
 
   # Neovim + tooling (LazyVim deps)
   neovim
