@@ -34,7 +34,7 @@ sudo pacman --noconfirm --needed -S \
   ttf-dejavu noto-fonts ttf-nerd-fonts-symbols-mono \
   networkmanager wireless_tools iw \
   pipewire pipewire-alsa pipewire-pulse wireplumber \
-  alsa-utils brightnessctl
+  alsa-utils brightnessctl imlib2
 
 # Enable NM so Wi-Fi/ethernet works out of the box
 info "Enabling NetworkManager…"
