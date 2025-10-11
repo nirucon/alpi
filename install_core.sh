@@ -1,39 +1,53 @@
-#!/usr/bin/env bash
-# CORE: Swedish keyboard, Xorg, NetworkManager, startx, fonts, essentials.
 
-set -euo pipefail
+#!/usr/bin/env bash
+# CORE – by Nicklas Rudolfsson https://github.com/nirucon
+
+set -Eeuo pipefail
+IFS=$'\n\t'
 
 info(){ printf "\033[1;32m[CORE]\033[0m %s\n" "$*"; }
-info "Syncing and upgrading system (pacman -Syu)..."
+warn(){ printf "\033[1;33m[CORE]\033[0m %s\n" "$*"; }
+fail(){ printf "\033[1;31m[CORE]\033[0m %s\n" "$*" >&2; }
+
+trap 'fail "install_core.sh failed. Check the previous step for details."' ERR
+
+# System refresh early so subsequent installs are smooth
+info "Syncing and upgrading system (pacman -Syu)…"
 sudo pacman --noconfirm -Syu
 
-info "Setting Swedish keyboard for TTY..."
-sudo install -Dm644 /dev/stdin /etc/vconsole.conf <<EOF
+# TTY keymap (Swedish)
+info "Setting Swedish TTY keymap (/etc/vconsole.conf)…"
+sudo install -Dm644 /dev/stdin /etc/vconsole.conf <<'EOF'
 KEYMAP=sv-latin1
 EOF
 
+# Ensure user bin exists for utilities we might add later
 HOME_BIN="$HOME/.local/bin"
 mkdir -p "$HOME_BIN"
 
-info "Installing base packages for Xorg and tools..."
+# Base Xorg, audio, networking, and essentials
+info "Installing base packages for Xorg, audio, and networking…"
 sudo pacman --noconfirm --needed -S \
   base-devel git \
   xorg-server xorg-xinit xorg-xrandr xorg-xsetroot \
   libx11 libxft libxinerama freetype2 fontconfig \
-  ttf-dejavu \
+  ttf-dejavu noto-fonts ttf-nerd-fonts-symbols-mono \
   networkmanager wireless_tools iw \
   pipewire pipewire-alsa pipewire-pulse wireplumber \
   alsa-utils brightnessctl
 
-info "Enabling NetworkManager..."
+# Enable NM so Wi-Fi/ethernet works out of the box
+info "Enabling NetworkManager…"
 sudo systemctl enable --now NetworkManager.service
 
-info "Install desktop fonts (JetBrainsMono Nerd Font via yay later, fallback now)..."
-sudo pacman --noconfirm --needed -S noto-fonts ttf-nerd-fonts-symbols-mono
-
-# Prepare startx auto on tty1
+# Auto-start X on tty1 for a smooth first login
 BASH_PROFILE="$HOME/.bash_profile"
-grep -qxF '[ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ] && exec startx' "$BASH_PROFILE" 2>/dev/null \
-  || echo '[ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ] && exec startx' >> "$BASH_PROFILE"
+AUTO_START='[ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ] && exec startx'
+if ! grep -qxF "$AUTO_START" "$BASH_PROFILE" 2>/dev/null; then
+  info "Enabling startx auto-launch on tty1…"
+  printf '%s\n' "$AUTO_START" >> "$BASH_PROFILE"
+else
+  warn "startx auto-launch already present in ~/.bash_profile (kept as-is)."
+fi
 
 info "CORE step complete."
