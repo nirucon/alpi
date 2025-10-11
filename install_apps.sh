@@ -39,6 +39,7 @@ PACMAN_PKGS=(
   papirus-icon-theme # pcmanfm styling
   gimp               #
   nextcloud-client   #
+  xautolock          # lock screen
 
   # Neovim + tooling (LazyVim deps)
   neovim
