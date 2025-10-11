@@ -37,6 +37,8 @@ PACMAN_PKGS=(
   libnotify          # notify
   materia-gtk-theme  # pcmanfm styling
   papirus-icon-theme # pcmanfm styling
+  gimp               #
+  nextcloud-client   #
 
   # Neovim + tooling (LazyVim deps)
   neovim
@@ -51,6 +53,7 @@ PACMAN_PKGS=(
 YAY_PKGS=(
   ttf-jetbrains-mono-nerd  # nice mono font
   brave-bin                # browser
+  spotify                  # music (cmus is better ofc)
 )
 
 # -----------------------------
