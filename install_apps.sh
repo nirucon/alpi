@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# APPS: Easy-to-edit lists for pacman & yay packages + Neovim + LazyVim bootstrap.
-# Run as a regular user with sudo privileges. Idempotent.
+# APPS: Easy-to-edit lists for pacman & yay packages.
 
 set -euo pipefail
 say(){ printf "\033[1;36m[APPS]\033[0m %s\n" "$*"; }
