@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Standalone installer/updater for DWM status bar.
-# - Writes ~/.local/bin/dwm-status.sh
-# - Adds a launch line to ~/.xinitrc if absent (non-destructive)
-# - Icon-aware with ASCII fallback
-# - Idempotent, safe, verbose
+# STATUSBAR – by Nicklas Rudolfsson https://github.com/nirucon
 
-set -euo pipefail
+set -Eeuo pipefail
+IFS=$'\n\t'
+
 say(){ printf "\033[1;36m[SBAR]\033[0m %s\n" "$*"; }
+fail(){ printf "\033[1;31m[SBAR]\033[0m %s\n" "$*" >&2; }
+trap 'fail "install_statusbar.sh failed. See previous step for details."' ERR
 
 LOCAL_BIN="$HOME/.local/bin"
 XINIT="$HOME/.xinitrc"
-
 mkdir -p "$LOCAL_BIN"
 
-say "Writing dwm-status.sh (icons + ASCII fallback)..."
+say "Writing dwm-status.sh (icons with ASCII fallback)…"
 install -Dm755 /dev/stdin "$LOCAL_BIN/dwm-status.sh" <<'EOF'
 #!/usr/bin/env bash
 # DWM status: [ 🔋/ | /disconnected | YYYY-MM-DD (w:WW) | HH:MM ]
-# Icons require a font with those glyphs in dwm. If missing, we fallback to ASCII.
-# Tweak via env:
-#   DWM_STATUS_ICONS=0|1    (default 1)
-#   DWM_STATUS_INTERVAL=sec (default 10)
-set -euo pipefail
+# Env:
+#   DWM_STATUS_ICONS=0|1 (default 1)
+#   DWM_STATUS_INTERVAL=seconds (default 10)
+
+set -Eeuo pipefail
+IFS=$'\n\t'
 
 supports_icons() {
   fc-list | grep -qi "Symbols Nerd Font" || return 1
@@ -79,7 +79,7 @@ wifi() {
   if [ -n "$ssid" ]; then
     if supports_icons; then printf " %s" "$ssid"; else printf "WIFI %s" "$ssid"; fi
   else
-    if supports_icons; then printf "睊 disconnected"; else printf "WIFI disconnected"; fi
+    if supports_icons; then printf "󰤭 disconnected"; else printf "WIFI disconnected"; fi
   fi
 }
 
@@ -114,34 +114,26 @@ EOF
 
 # Ensure .xinitrc launches the bar (append once, non-destructive)
 if [ ! -f "$XINIT" ]; then
-  say "Creating minimal .xinitrc and enabling status bar..."
+  say "Creating minimal .xinitrc and enabling status bar…"
   cat > "$XINIT" <<'EOF'
 #!/bin/sh
-# Swedish keyboard in X
 setxkbmap se
-# Restore wallpaper if available
 command -v nitrogen >/dev/null && nitrogen --restore &
-# Compositor
 command -v picom >/dev/null && picom --experimental-backends &
-# Status bar
 ~/.local/bin/dwm-status.sh &
-# Fallback background
 xsetroot -solid "#111111"
-# Start dwm
 exec dwm
 EOF
   chmod 644 "$XINIT"
+elif ! grep -q 'dwm-status.sh' "$XINIT" 2>/dev/null; then
+  say "Adding status bar launch to ~/.xinitrc …"
+  {
+    echo ''
+    echo '# Status bar'
+    echo '~/.local/bin/dwm-status.sh &'
+  } >> "$XINIT"
 else
-  if ! grep -q 'dwm-status.sh' "$XINIT" 2>/dev/null; then
-    say "Adding status bar launch to ~/.xinitrc ..."
-    {
-      echo ''
-      echo '# Status bar'
-      echo '~/.local/bin/dwm-status.sh &'
-    } >> "$XINIT"
-  else
-    say "Status bar launch already present in ~/.xinitrc — leaving as-is."
-  fi
+  say "Status bar launch already present in ~/.xinitrc — leaving as-is."
 fi
 
-say "Status bar installed. (Use DWM_STATUS_ICONS=0 and/or DWM_STATUS_INTERVAL=5 to tweak behavior.)"
+say "Status bar installed. (Use DWM_STATUS_ICONS=0 and/or DWM_STATUS_INTERVAL=5 to tweak.)"
