@@ -1,34 +1,71 @@
 #!/usr/bin/env bash
 # STATUSBAR – by Nicklas Rudolfsson https://github.com/nirucon
 
+# Strict error handling for reliability
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-say(){ printf "\033[1;36m[SBAR]\033[0m %s\n" "$*"; }
+# ---------- Pretty logging ----------
+say(){  printf "\033[1;36m[SBAR]\033[0m %s\n" "$*"; }
 fail(){ printf "\033[1;31m[SBAR]\033[0m %s\n" "$*" >&2; }
+
+# Fail with context if anything errors
 trap 'fail "install_statusbar.sh failed. See previous step for details."' ERR
+
+# ---------- Safety: refuse running as root ----------
+# Running as root would place files under /root and cause confusion.
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  fail "Do not run this script with sudo/root. Run it as your normal user."
+  # If you prefer to auto-target the invoking sudo user instead, you could replace the 'exit 1'
+  # above with dynamic HOME detection:
+  # if [ -n "${SUDO_USER:-}" ]; then
+  #   USER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  #   export HOME="$USER_HOME"
+  #   say "Running under sudo; targeting HOME=$HOME for file installation."
+  # else
+  #   exit 1
+  # fi
+  exit 1
+fi
 
 LOCAL_BIN="$HOME/.local/bin"
 XINIT="$HOME/.xinitrc"
+
+# Ensure ~/.local/bin exists
 mkdir -p "$LOCAL_BIN"
+
+# Ensure ~/.local/bin is on PATH for future shells (idempotent append)
+if ! printf '%s' "$PATH" | grep -q "$HOME/.local/bin"; then
+  say "Adding ~/.local/bin to PATH via ~/.bash_profile"
+  grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bash_profile" 2>/dev/null \
+    || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bash_profile"
+fi
 
 say "Writing dwm-status.sh (icons with ASCII fallback)…"
 install -Dm755 /dev/stdin "$LOCAL_BIN/dwm-status.sh" <<'EOF'
 #!/usr/bin/env bash
 # DWM status: [ 🔋/ | /disconnected | YYYY-MM-DD (w:WW) | HH:MM ]
-# Env:
-#   DWM_STATUS_ICONS=0|1 (default 1)
-#   DWM_STATUS_INTERVAL=seconds (default 10)
+# by Nicklas Rudolfsson https://github.com/nirucon
+#
+# Purpose:
+#   Lightweight, dependency-minimal status line for dwm via xsetroot.
+#   Uses Nerd Font icons when available; falls back to ASCII text otherwise.
+#
+# Environment:
+#   DWM_STATUS_ICONS=0|1       # default 1; set 0 to force ASCII-only
+#   DWM_STATUS_INTERVAL=seconds # default 10; update interval
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
 supports_icons() {
+  # Detect a Symbols Nerd Font and whether icons are allowed
   fc-list | grep -qi "Symbols Nerd Font" || return 1
   [ "${DWM_STATUS_ICONS:-1}" = "1" ]
 }
 
 battery() {
+  # Show battery percent and charging status if a battery is present
   shopt -s nullglob
   local bat_dirs=(/sys/class/power_supply/BAT*)
   shopt -u nullglob
@@ -62,6 +99,7 @@ battery() {
 }
 
 wifi() {
+  # Show SSID if connected via Wi-Fi; otherwise show disconnected
   shopt -s nullglob
   local wl_ifaces=(/sys/class/net/wl*)
   shopt -u nullglob
@@ -84,6 +122,7 @@ wifi() {
 }
 
 build_line() {
+  # Compose the full status string from parts, with graceful omissions
   local parts=()
 
   local b_str; b_str="$(battery 2>/dev/null || true)"; [ -n "${b_str:-}" ] && parts+=("$b_str")
@@ -114,9 +153,10 @@ EOF
 
 # Ensure .xinitrc launches the bar (append once, non-destructive)
 if [ ! -f "$XINIT" ]; then
-  say "Creating minimal .xinitrc and enabling status bar…"
+  say "Creating minimal ~/.xinitrc and enabling status bar…"
   cat > "$XINIT" <<'EOF'
 #!/bin/sh
+# Minimal X init with Swedish layout and dwm status bar
 setxkbmap se
 command -v nitrogen >/dev/null && nitrogen --restore &
 command -v picom >/dev/null && picom --experimental-backends &
@@ -136,4 +176,5 @@ else
   say "Status bar launch already present in ~/.xinitrc — leaving as-is."
 fi
 
-say "Status bar installed. (Use DWM_STATUS_ICONS=0 and/or DWM_STATUS_INTERVAL=5 to tweak.)"
+say "Status bar installed. (Tweak with DWM_STATUS_ICONS=0 and/or DWM_STATUS_INTERVAL=5)"
+say "Verify: ls -la ~/.local/bin/dwm-status.sh"
