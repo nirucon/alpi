@@ -30,6 +30,7 @@ PACMAN_PKGS=(
   lxappearance       # gtk theming
   maim               # screenshot alt
   alacritty          # terminal 2
+  fastfetch          # fetchinfo
 
   # Neovim + tooling (LazyVim deps)
   neovim
