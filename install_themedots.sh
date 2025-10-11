@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # install_themedots.sh — install theming & dotfiles
 # Source: https://github.com/nirucon/suckless_themedots
-# Installs: ~/.bashrc, ~/.config/dunst/dunstrc, ~/.config/alacritty/alacritty.(toml|yml), ~/.config/rofi/config(.rasi)
+# Installs by default:
+#   ~/.bashrc
+#   ~/.bash_aliases
+#   ~/.inputrc
+#   ~/.config/dunst/dunstrc
+#   ~/.config/alacritty/alacritty.(toml|yml)
+#   ~/.config/rofi/config(.rasi)
 #
 # Usage:
 #   ./install_themedots.sh [--repo URL] [--branch BRANCH] [--local PATH] [--include LIST] [--dry-run] [--no-backup]
@@ -38,7 +44,7 @@ fi
 REPO_URL="https://github.com/nirucon/suckless_themedots"
 REPO_BRANCH=""
 LOCAL_PATH=""
-INCLUDE_ITEMS=("bashrc" "dunst" "alacritty" "rofi")
+INCLUDE_ITEMS=("bashrc" "bash_aliases" "inputrc" "dunst" "alacritty" "rofi")
 DRY_RUN=0
 NO_BACKUP=0
 
@@ -48,7 +54,7 @@ install_themedots.sh — options
   --repo URL         Git repository to pull from (default: nirucon/suckless_themedots)
   --branch BRANCH    Branch/tag to checkout (default: repo default)
   --local PATH       Use an already cloned local path instead of git clone
-  --include "items"  Space-separated list among: bashrc dunst alacritty rofi
+  --include "items"  Space-separated list among: bashrc bash_aliases inputrc dunst alacritty rofi
   --dry-run          Print what would be done without writing files
   --no-backup        Overwrite without creating .bak timestamp (not recommended)
 EOF
@@ -156,8 +162,29 @@ install_bashrc() {
       "bash/.bashrc" \
       "home/.bashrc" \
       "dots/.bashrc" \
-      "bashrc")" || { warn "No .bashrc found in repo — skipping."; return; }
+      "bashrc")" || { warn "No .bashrc found — skipping."; return; }
   install_file "$src" "$HOME/.bashrc"
+}
+
+install_bash_aliases() {
+  local src
+  src="$(first_existing "$REPO_DIR" \
+      ".bash_aliases" \
+      "bash/.bash_aliases" \
+      "home/.bash_aliases" \
+      "dots/.bash_aliases" \
+      "bash_aliases")" || { warn "No .bash_aliases found — skipping."; return; }
+  install_file "$src" "$HOME/.bash_aliases"
+}
+
+install_inputrc() {
+  local src
+  src="$(first_existing "$REPO_DIR" \
+      ".inputrc" \
+      "inputrc" \
+      "home/.inputrc" \
+      "dots/.inputrc")" || { warn "No .inputrc found — skipping."; return; }
+  install_file "$src" "$HOME/.inputrc"
 }
 
 install_dunst() {
@@ -201,7 +228,6 @@ install_rofi() {
       "config/rofi/config" \
       "config.rasi" \
       "config")" || { warn "No rofi config found — skipping."; return; }
-  # Preserve filename (config or config.rasi)
   install_file "$src" "$HOME/.config/rofi/$(basename "$src")"
 }
 
@@ -212,10 +238,12 @@ get_repo
 say "Installing items: ${INCLUDE_ITEMS[*]}"
 for item in "${INCLUDE_ITEMS[@]}"; do
   case "$item" in
-    bashrc)    step "bashrc";    install_bashrc ;;
-    dunst)     step "dunst";     install_dunst  ;;
-    alacritty) step "alacritty"; install_alacritty ;;
-    rofi)      step "rofi";      install_rofi   ;;
+    bashrc)        step "bashrc";        install_bashrc ;;
+    bash_aliases)  step "bash_aliases";  install_bash_aliases ;;
+    inputrc)       step "inputrc";       install_inputrc ;;
+    dunst)         step "dunst";         install_dunst  ;;
+    alacritty)     step "alacritty";     install_alacritty ;;
+    rofi)          step "rofi";          install_rofi   ;;
     *) warn "Unknown include item: $item";;
   esac
 done
