@@ -113,6 +113,9 @@ say "Ensuring .xinitrc exists (SE keyboard, nitrogen restore, picom, dwm)…"
 if [ ! -f "$XINIT" ]; then
   cat > "$XINIT" <<'EOF'
 #!/bin/sh
+# home
+cd "$HOME"
+
 # Swedish keyboard in X
 setxkbmap se
 
