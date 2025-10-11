@@ -35,6 +35,8 @@ PACMAN_PKGS=(
   xclip              #
   dunst              # notify
   libnotify          # notify
+  materia-gtk-theme  # pcmanfm styling
+  papirus-icon-theme # pcmanfm styling
 
   # Neovim + tooling (LazyVim deps)
   neovim
