@@ -42,6 +42,7 @@ PACMAN_PKGS=(
   mpv                #
   jq                 #
   fzf                #
+  btop               # sysinfo
 
   # Neovim + tooling (LazyVim deps)
   neovim
