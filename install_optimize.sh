@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
 # OPTIMIZE: Safe performance & hardware tuning for Arch Linux.
-# - pacman: Color + ParallelDownloads
-# - makepkg: parallel builds (-jN)
-# - (Optional) reflector: refresh fast mirrors (prompt)
-# - CPU microcode (Intel/AMD)
-# - zram (lz4, RAM/2)
-# - Laptop power mgmt: TLP (and thermald on Intel)
-# - Timesync: systemd-timesyncd
-#
-# Idempotent and chatty so you always see what's happening.
 
 set -euo pipefail
 
