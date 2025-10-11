@@ -128,6 +128,9 @@ command -v picom >/dev/null && picom --experimental-backends &
 # Status bar (installed by install_statusbar.sh)
 [ -x "$HOME/.local/bin/dwm-status.sh" ] && "$HOME/.local/bin/dwm-status.sh" &
 
+# autolock
+xautolock -time 10 -locker slock &
+
 # Solid background fallback
 xsetroot -solid "#111111"
 
