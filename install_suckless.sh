@@ -175,6 +175,11 @@ if command -v nextcloud >/dev/null; then
 fi
 
 # ────────────────────────────────────────────────
+# For transparency
+# ────────────────────────────────────────────────
+picom --experimental-backends &
+
+# ────────────────────────────────────────────────
 # Trap to clean up background processes on exit
 # ────────────────────────────────────────────────
 trap 'kill -- -$$' EXIT
