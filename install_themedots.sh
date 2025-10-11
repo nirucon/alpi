@@ -198,7 +198,9 @@ install_rofi() {
       "dotconfig/rofi/config.rasi" \
       "dotconfig/rofi/config" \
       "config/rofi/config.rasi" \
-      "config/rofi/config")" || { warn "No rofi config found — skipping."; return; }
+      "config/rofi/config" \
+      "config.rasi" \
+      "config")" || { warn "No rofi config found — skipping."; return; }
   # Preserve filename (config or config.rasi)
   install_file "$src" "$HOME/.config/rofi/$(basename "$src")"
 }
