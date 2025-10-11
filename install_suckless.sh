@@ -131,6 +131,9 @@ command -v picom >/dev/null && picom --experimental-backends &
 # autolock
 xautolock -time 10 -locker slock &
 
+# nextcloud sync
+nextcloud --background &
+
 # Solid background fallback
 xsetroot -solid "#111111"
 
