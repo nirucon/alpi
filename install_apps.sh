@@ -29,6 +29,7 @@ PACMAN_PKGS=(
   picom              # compositor (also used by st transparency)
   lxappearance       # gtk theming
   maim               # screenshot alt
+  alacritty          # terminal 2
 
   # Neovim + tooling (LazyVim deps)
   neovim
