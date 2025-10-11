@@ -55,6 +55,7 @@ install_themedots.sh — options
   --branch BRANCH    Branch/tag to checkout (default: repo default)
   --local PATH       Use an already cloned local path instead of git clone
   --include "items"  Space-separated list among: bashrc bash_aliases inputrc dunst alacritty rofi
+                     (extra: rofi_theme_system to install Black-Metal.rasi to /usr/share/rofi/themes)
   --dry-run          Print what would be done without writing files
   --no-backup        Overwrite without creating .bak timestamp (not recommended)
 EOF
@@ -231,6 +232,37 @@ install_rofi() {
   install_file "$src" "$HOME/.config/rofi/$(basename "$src")"
 }
 
+# --- New: system-wide Rofi theme installer ---
+install_rofi_theme_system() {
+  # Installs Black-Metal.rasi from the repo into /usr/share/rofi/themes/Black-Metal.rasi (requires sudo if not writable)
+  local src
+  src="$(first_existing "$REPO_DIR" \
+      "rofi/themes/Black-Metal.rasi" \
+      "themes/Black-Metal.rasi" \
+      "Black-Metal.rasi")" || { warn "No Black-Metal.rasi found — skipping."; return; }
+
+  local dest="/usr/share/rofi/themes/Black-Metal.rasi"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    say "[dry-run] Would install (sudo): $src -> $dest"
+    return 0
+  fi
+
+  # Ensure destination directory exists (may need sudo)
+  if [[ -d "/usr/share/rofi/themes" && -w "/usr/share/rofi/themes" ]]; then
+    install -Dm644 -- "$src" "$dest"
+  else
+    if command -v sudo >/dev/null 2>&1; then
+      say "Using sudo to install theme system-wide …"
+      sudo mkdir -p "/usr/share/rofi/themes"
+      sudo install -Dm644 -- "$src" "$dest"
+    else
+      fail "Cannot write to /usr/share/rofi/themes and 'sudo' is not available. Install manually."
+      return 1
+    fi
+  fi
+  say "Installed system rofi theme: $dest"
+}
+
 # ---------- Main ----------
 step "Preparing repository"
 get_repo
@@ -238,12 +270,13 @@ get_repo
 say "Installing items: ${INCLUDE_ITEMS[*]}"
 for item in "${INCLUDE_ITEMS[@]}"; do
   case "$item" in
-    bashrc)        step "bashrc";        install_bashrc ;;
-    bash_aliases)  step "bash_aliases";  install_bash_aliases ;;
-    inputrc)       step "inputrc";       install_inputrc ;;
-    dunst)         step "dunst";         install_dunst  ;;
-    alacritty)     step "alacritty";     install_alacritty ;;
-    rofi)          step "rofi";          install_rofi   ;;
+    bashrc)             step "bashrc";             install_bashrc ;;
+    bash_aliases)       step "bash_aliases";       install_bash_aliases ;;
+    inputrc)            step "inputrc";            install_inputrc ;;
+    dunst)              step "dunst";              install_dunst  ;;
+    alacritty)          step "alacritty";          install_alacritty ;;
+    rofi)               step "rofi";               install_rofi   ;;
+    rofi_theme_system)  step "rofi_theme_system";  install_rofi_theme_system ;;
     *) warn "Unknown include item: $item";;
   esac
 done
@@ -256,6 +289,7 @@ Theming/dotfiles step complete.
 Notes:
 • Existing files were backed up with a .bak.TIMESTAMP suffix (unless --no-backup).
 • Rofi, Alacritty, Dunst must be installed for configs to take effect.
+• System theme install: use --include "rofi_theme_system" (will sudo if needed).
 • Re-run this script anytime; it is safe and idempotent.
 ========================================================
 EOT
