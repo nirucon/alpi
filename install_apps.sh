@@ -40,6 +40,8 @@ PACMAN_PKGS=(
   gimp               #
   nextcloud-client   # sync stuff
   mpv                #
+  jq                 #
+  fzf                #
 
   # Neovim + tooling (LazyVim deps)
   neovim
