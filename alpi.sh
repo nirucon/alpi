@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 # ALPI – by Nicklas Rudolfsson https://github.com/nirucon
 
@@ -42,6 +41,22 @@ bash "$SCRIPT_DIR/install_suckless.sh"
 
 say  "4/4 APPS  -> Desktop apps via pacman & yay, LazyVim bootstrap"
 bash "$SCRIPT_DIR/install_apps.sh"
+
+# ---------- Optional: theming & dotfiles ----------
+if [ -x "$SCRIPT_DIR/install_themedots.sh" ]; then
+  echo
+  warn "Optional step: theming & dotfiles (.bashrc, dunst, alacritty, rofi) from nirucon/suckless_themedots"
+  read -rp "Run install_themedots.sh now? [y/N]: " _ans
+  _ans="${_ans:-N}"
+  if [[ "$_ans" =~ ^[Yy]$ ]]; then
+    say  "5/5 DOTS  -> Applying theming & dotfiles"
+    bash "$SCRIPT_DIR/install_themedots.sh"
+  else
+    say  "Skipping theming/dots (you can run: $SCRIPT_DIR/install_themedots.sh later)."
+  fi
+else
+  warn "install_themedots.sh not found in $SCRIPT_DIR — skipping optional theming step."
+fi
 
 step "ALPI finished"
 say  "Log out to TTY or reboot. Login on tty1 will auto-start dwm via startx."
