@@ -121,12 +121,74 @@ wifi() {
   fi
 }
 
+# --- Nextcloud status (no tray needed) ---
+nc_status() {
+  # Don't show anything if client is not installed
+  command -v nextcloud >/dev/null 2>&1 || return 0
+
+  # If process not running -> OFF
+  pgrep -x nextcloud >/dev/null 2>&1 || {
+    if supports_icons; then printf " off"; else printf "NC off"; fi
+    return 0
+  }
+
+  # Try CloudProviders via D-Bus (Nextcloud desktop client exposes com.nextcloudgmbh.Nextcloud)
+  if command -v gdbus >/dev/null 2>&1; then
+    local objs; objs="$(gdbus call --session \
+      --dest com.nextcloudgmbh.Nextcloud \
+      --object-path /com/nextcloudgmbh/Nextcloud \
+      --method org.freedesktop.DBus.ObjectManager.GetManagedObjects 2>/dev/null)" || objs=""
+
+    # If query failed, just say RUN
+    if [ -z "$objs" ]; then
+      if supports_icons; then printf " run"; else printf "NC run"; fi
+      return 0
+    fi
+
+    # Parse object paths from the returned dict (bash-safe heuristic)
+    local any_sync=0 any_ok=0
+    while IFS= read -r path; do
+      # Probe a few common props on org.freedesktop.CloudProvider1
+      local val=""
+      for prop in Status State Connected; do
+        v="$(gdbus call --session \
+             --dest com.nextcloudgmbh.Nextcloud \
+             --object-path "$path" \
+             --method org.freedesktop.DBus.Properties.Get \
+             org.freedesktop.CloudProvider1 "$prop" 2>/dev/null || true)"
+        [ -n "$v" ] && { val="$v"; break; }
+      done
+      [ -z "$val" ] && continue
+
+      up="$(printf "%s" "$val" | tr '[:lower:]' '[:upper:]')"
+      if printf "%s" "$up" | grep -Eq "SYNC|BUSY|RUN|WORK|PROGRESS"; then
+        any_sync=1
+      elif printf "%s" "$up" | grep -Eq "OK|IDLE|READY|TRUE|ONLINE|CONNECTED"; then
+        any_ok=1
+      fi
+    done < <(printf "%s\n" "$objs" | sed -n "s/^\s*['\"]\([^'\"]\+\)['\"].*/\1/p")
+
+    if [ "$any_sync" -eq 1 ]; then
+      if supports_icons; then printf " sync"; else printf "NC sync"; fi
+    elif [ "$any_ok" -eq 1 ]; then
+      if supports_icons; then printf " ok"; else printf "NC ok"; fi
+    else
+      if supports_icons; then printf " run"; else printf "NC run"; fi
+    fi
+    return 0
+  fi
+
+  # Fallback if no gdbus: we know it's running
+  if supports_icons; then printf " run"; else printf "NC run"; fi
+}
+
 build_line() {
   # Compose the full status string from parts, with graceful omissions
   local parts=()
 
   local b_str; b_str="$(battery 2>/dev/null || true)"; [ -n "${b_str:-}" ] && parts+=("$b_str")
   local w_str; w_str="$(wifi 2>/dev/null || true)";    [ -n "${w_str:-}" ] && parts+=("$w_str")
+  local n_str; n_str="$(nc_status 2>/dev/null || true)"; [ -n "${n_str:-}" ] && parts+=("$n_str")
 
   local d t
   d="$(date +'%Y-%m-%d (w:%V)')"
