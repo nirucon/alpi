@@ -33,6 +33,7 @@ PACMAN_PKGS=(
   fastfetch          # fetchinfo
   slop               #
   xclip              #
+  dunst              # notify
 
   # Neovim + tooling (LazyVim deps)
   neovim
