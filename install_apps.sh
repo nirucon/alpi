@@ -31,6 +31,8 @@ PACMAN_PKGS=(
   maim               # screenshot alt
   alacritty          # terminal 2
   fastfetch          # fetchinfo
+  slop               #
+  xclip              #
 
   # Neovim + tooling (LazyVim deps)
   neovim
