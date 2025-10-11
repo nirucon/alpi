@@ -131,6 +131,11 @@ command -v picom >/dev/null && picom --experimental-backends &
 # Solid background fallback
 xsetroot -solid "#111111"
 
+# Restart dwm in case of reload or crash + log
+while true; do
+    /usr/local/bin/dwm 2>/tmp/dwm.log
+done
+
 # Start dwm
 exec dwm
 EOF
