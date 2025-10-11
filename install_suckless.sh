@@ -113,37 +113,79 @@ say "Ensuring .xinitrc exists (SE keyboard, nitrogen restore, picom, dwm)…"
 if [ ! -f "$XINIT" ]; then
   cat > "$XINIT" <<'EOF'
 #!/bin/sh
-# home
+# ────────────────────────────────────────────────
+# Nicklas Rudolfsson xinit config
+# ────────────────────────────────────────────────
+
+# Go to home directory to ensure relative paths work
 cd "$HOME"
 
-# Swedish keyboard in X
-setxkbmap se
+# ────────────────────────────────────────────────
+# Keyboard layout
+# ────────────────────────────────────────────────
+setxkbmap se    # Set Swedish keyboard layout
 
-# Restore wallpaper (nitrogen) if available
-command -v nitrogen >/dev/null && nitrogen --restore &
-
-# Compositor (useful for st translucency)
-command -v picom >/dev/null && picom --experimental-backends &
-
-# Status bar (installed by install_statusbar.sh)
-[ -x "$HOME/.local/bin/dwm-status.sh" ] && "$HOME/.local/bin/dwm-status.sh" &
-
-# autolock
-xautolock -time 10 -locker slock &
-
-# nextcloud sync
-nextcloud --background &
-
-# Solid background fallback
+# ────────────────────────────────────────────────
+# Solid color fallback (used briefly before wallpaper loads)
+# ────────────────────────────────────────────────
 xsetroot -solid "#111111"
 
-# Restart dwm in case of reload or crash + log
-while true; do
-    /usr/local/bin/dwm 2>/tmp/dwm.log
-done
+# ────────────────────────────────────────────────
+# Restore last wallpaper using Nitrogen (if installed)
+# ────────────────────────────────────────────────
+if command -v nitrogen >/dev/null; then
+    nitrogen --restore &
+fi
 
-# Start dwm
-exec dwm
+# ────────────────────────────────────────────────
+# Start rotating wallpapers every 15 minutes (if script exists)
+# Script: ~/.local/bin/wallrotate.sh
+# ────────────────────────────────────────────────
+if [ -x "$HOME/.local/bin/wallrotate.sh" ]; then
+    "$HOME/.local/bin/wallrotate.sh" &
+fi
+
+# ────────────────────────────────────────────────
+# Start compositor (for transparency, shadows, etc.)
+# ────────────────────────────────────────────────
+if command -v picom >/dev/null; then
+    picom --experimental-backends &
+fi
+
+# ────────────────────────────────────────────────
+# Start your DWM status bar (if available)
+# ────────────────────────────────────────────────
+if [ -x "$HOME/.local/bin/dwm-status.sh" ]; then
+    "$HOME/.local/bin/dwm-status.sh" &
+fi
+
+# ────────────────────────────────────────────────
+# Automatic screen locker after inactivity
+# Uses xautolock + slock
+# ────────────────────────────────────────────────
+if command -v xautolock >/dev/null && command -v slock >/dev/null; then
+    xautolock -time 10 -locker slock &
+fi
+
+# ────────────────────────────────────────────────
+# Start Nextcloud sync client (if installed)
+# ────────────────────────────────────────────────
+if command -v nextcloud >/dev/null; then
+    nextcloud --background &
+fi
+
+# ────────────────────────────────────────────────
+# Trap to clean up background processes on exit
+# ────────────────────────────────────────────────
+trap 'kill -- -$$' EXIT
+
+# ────────────────────────────────────────────────
+# Start DWM with auto-restart on crash or manual restart
+# Log output to /tmp/dwm.log for debugging
+# ────────────────────────────────────────────────
+while true; do
+    /usr/local/bin/dwm 2> /tmp/dwm.log
+done
 EOF
   chmod 644 "$XINIT"
 else
