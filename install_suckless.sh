@@ -177,7 +177,7 @@ fi
 # ────────────────────────────────────────────────
 # For transparency
 # ────────────────────────────────────────────────
-picom --experimental-backends &
+picom &
 
 # ────────────────────────────────────────────────
 # Trap to clean up background processes on exit
