@@ -103,9 +103,9 @@ else
 # by Nicklas Rudolfsson https://github.com/nirucon
 #
 # Env:
-#   DWM_STATUS_ICONS=0|1         # default 1; set 0 to force text-only
-#   DWM_STATUS_ASSUME_ICONS=0|1  # optional hard override to force icon mode (default 0)
-#   DWM_STATUS_INTERVAL=seconds  # default 10
+DWM_STATUS_ICONS=1                # default 1; set 0 to force text-only
+DWM_STATUS_ASSUME_ICONS=1         # optional hard override to force icon mode (default 0)
+# DWM_STATUS_INTERVAL=seconds       # default 10
 
 set -Eeuo pipefail
 IFS=$'\n\t'
