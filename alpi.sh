@@ -1,131 +1,160 @@
 #!/usr/bin/env bash
-# ALPI – by Nicklas Rudolfsson (nirucon)
-# One-shot setup for Arch Linux suckless/dwm environment for my own needs - NO WARRANTY!
-# Runs: core -> optimize -> suckless -> apps -> statusbar -> (optional) themedots
+# alpi.sh — Arch post-install orchestrator
+# Purpose: Run all install scripts in the correct order with clear output and safe defaults.
+# Author:  Nicklas Rudolfsson (NIRUCON)
+# Output:  Clear, English-only status messages. Fail-fast on errors.
+# Notes:   • Not interactive by default; suitable for unattended runs
+#          • Each step can be toggled/skipped via flags
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# -------------------- Colors --------------------
-GREEN="\033[1;32m"; BLUE="\033[1;34m"; YELLOW="\033[1;33m"; RED="\033[1;31m"; NC="\033[0m"
-say()  { printf "${GREEN}[INFO]${NC} %s\n" "$*"; }
-step() { printf "${BLUE}==>${NC} %s\n" "$*"; }
-warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
-fail() { printf "${RED}[FAIL]${NC} %s\n" "$*"; }
+# ───────── Pretty logging ─────────
+GRN="\033[1;32m"; CYN="\033[1;36m"; YLW="\033[1;33m"; RED="\033[1;31m"; BLU="\033[1;34m"; NC="\033[0m"
+say()  { printf "${GRN}[ALPI]${NC} %s\n" "$*"; }
+step() { printf "${BLU}==>${NC} %s\n" "$*"; }
+warn() { printf "${YLW}[WARN]${NC} %s\n" "$*"; }
+fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
+trap 'fail "alpi.sh failed. See previous messages for details."' ERR
 
-# -------------------- Error trap --------------------
-on_error() {
-  local exit_code=$?
-  local line_no=${BASH_LINENO[0]}
-  fail "Error on line ${line_no}. Aborting. (exit ${exit_code})"
-  exit $exit_code
+# ───────── Safety ─────────
+[[ ${EUID:-$(id -u)} -ne 0 ]] || { fail "Do not run as root."; exit 1; }
+command -v pacman >/dev/null 2>&1 || { fail "This orchestrator targets Arch (pacman not found)."; exit 1; }
+
+# ───────── Defaults ─────────
+DRY_RUN=0
+STEPS=(core lookandfeel suckless statusbar apps optimize)
+SCK_SOURCE="vanilla"    # vanilla|nirucon for install_suckless.sh
+SCK_NO_FONTS=0           # pass --no-fonts to install_suckless.sh
+CORE_NO_SNAPSHOTS=0      # pass --no-snapshots to install_core.sh
+CORE_NO_UPGRADE=0        # pass --no-upgrade to install_core.sh
+APPS_NO_YAY=0            # pass --no-yay to install_apps.sh
+APPS_NO_FILES=0          # pass --no-files to install_apps.sh
+OPTI_DISABLE=0           # skip optimize step
+JOBS="$(nproc 2>/dev/null || echo 2)"
+
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+PATH="$HOME/.local/bin:$PATH"  # ensure local bin early for subsequent scripts
+
+usage(){ cat <<'EOF'
+alpi.sh — options
+  --only list          Comma-separated subset of steps (core,lookandfeel,suckless,statusbar,apps,optimize)
+  --skip list          Comma-separated steps to skip
+  --nirucon            Build suckless from github.com/nirucon/suckless (default: vanilla)
+  --no-fonts           Do not install fonts in install_suckless.sh
+  --no-snapshots       Do not set up timeshift/autosnap in install_core.sh
+  --no-upgrade         Skip pacman -Syu in install_core.sh
+  --no-yay             Do not install yay or any AUR apps in install_apps.sh
+  --no-files           Ignore apps-pacman.txt and apps-yay.txt in install_apps.sh
+  --jobs N             Parallel make jobs for suckless builds (default: nproc)
+  --dry-run            Print actions without changing the system
+  -h|--help            Show this help
+
+Design:
+• Order: core → lookandfeel → suckless → statusbar → apps → optimize.
+• install_suckless.sh manages ~/.xinitrc hooks; statusbar install does NOT modify xinit by default.
+• Each sub-script is run with flags to avoid overlap and ensure idempotence.
+EOF
 }
-trap on_error ERR
 
-# -------------------- Preconditions --------------------
-if [[ ${EUID} -eq 0 ]]; then
-  fail "Do not run alpi.sh as root. Run as a normal user; the script uses sudo when needed."
-  exit 1
-fi
+parse_csv(){ local IFS=","; read -r -a _arr <<<"$1"; printf '%s\n' "${_arr[@]}"; }
+contains(){ local n=$1; shift; for e; do [[ $e == "$n" ]] && return 0; done; return 1; }
+run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else eval "$@"; fi }
+ensure_x(){ local f="$1"; [[ -x "$f" ]] || run "chmod +x '$f'"; }
 
-if [[ -z "${HOME:-}" || ! -d "$HOME" ]]; then
-  fail "\$HOME is not set or does not point to a valid directory."
-  exit 1
-fi
-
-# Resolve SCRIPT_DIR even if symlinked
-SCRIPT_SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SCRIPT_SOURCE" ]; do
-  DIR="$( cd -P "$( dirname "$SCRIPT_SOURCE" )" >/dev/null 2>&1 && pwd )"
-  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
-  [[ $SCRIPT_SOURCE != /* ]] && SCRIPT_SOURCE="$DIR/$SCRIPT_SOURCE"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --only)    mapfile -t STEPS < <(parse_csv "$2"); shift 2;;
+    --skip)    readarray -t SKIP_STEPS < <(parse_csv "$2"); shift 2;;
+    --nirucon) SCK_SOURCE="nirucon"; shift;;
+    --no-fonts) SCK_NO_FONTS=1; shift;;
+    --no-snapshots) CORE_NO_SNAPSHOTS=1; shift;;
+    --no-upgrade)   CORE_NO_UPGRADE=1; shift;;
+    --no-yay)       APPS_NO_YAY=1; shift;;
+    --no-files)     APPS_NO_FILES=1; shift;;
+    --jobs)         JOBS="$2"; shift 2;;
+    --dry-run)      DRY_RUN=1; shift;;
+    -h|--help)      usage; exit 0;;
+    *) warn "Unknown option: $1"; usage; exit 1;;
+  esac
 done
-SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_SOURCE" )" >/dev/null 2>&1 && pwd )"
 
-say  "Starting ALPI"
-say  "SCRIPT_DIR: $SCRIPT_DIR"
-say  "User:       $(whoami)"
-say  "HOME:       $HOME"
+# Resolve script paths (prefer local directory)
+LOOK="$SCRIPT_DIR/install_lookandfeel.sh"
+SUCK="$SCRIPT_DIR/install_suckless.sh"
+SBAR="$SCRIPT_DIR/install_statusbar.sh"
+CORE="$SCRIPT_DIR/install_core.sh"
+APPS="$SCRIPT_DIR/install_apps.sh"
+OPTI="$SCRIPT_DIR/install_optimize.sh"
 
-# -------------------- Require helper scripts --------------------
-require_file() {
-  local f="$1"
-  if [[ ! -f "$f" ]]; then
-    fail "Missing file: $f"
-    exit 1
+for f in "$LOOK" "$SUCK" "$SBAR" "$CORE" "$APPS" "$OPTI"; do
+  [[ -f "$f" ]] || { fail "Missing script: $f"; }
+  ensure_x "$f"
+done
+
+say "Starting ALPI orchestration"
+
+for stepname in "${STEPS[@]}"; do
+  if [[ -n "${SKIP_STEPS:-}" ]] && contains "$stepname" "${SKIP_STEPS[@]}"; then
+    warn "Skipping step: $stepname"; continue
   fi
-  if [[ ! -x "$f" ]]; then
-    warn "File not executable, setting +x: $f"
-    chmod +x "$f"
-  fi
-}
+  case "$stepname" in
+    core)
+      step "[1/6] Core setup"
+      args=()
+      (( CORE_NO_SNAPSHOTS==1 )) && args+=(--no-snapshots)
+      (( CORE_NO_UPGRADE==1 ))   && args+=(--no-upgrade)
+      (( DRY_RUN==1 )) && args+=(--dry-run)
+      run "'$CORE' ${args[*]}"
+      ;;
+    lookandfeel)
+      step "[2/6] Look & Feel (dotfiles, scripts, picom.conf)"
+      args=()
+      (( DRY_RUN==1 )) && args+=(--dry-run)
+      run "'$LOOK' ${args[*]}"
+      ;;
+    suckless)
+      step "[3/6] Suckless stack (dwm, st, dmenu, slock, slstatus)"
+      args=(--jobs "$JOBS" --source "$SCK_SOURCE")
+      (( SCK_NO_FONTS==1 )) && args+=(--no-fonts)
+      (( DRY_RUN==1 )) && args+=(--dry-run)
+      run "'$SUCK' ${args[*]}"
+      ;;
+    statusbar)
+      step "[4/6] Status bar (dwm-status.sh)"
+      args=()
+      # Do NOT add --hook-xinit; .xinitrc is managed by install_suckless.sh
+      (( DRY_RUN==1 )) && args+=(--dry-run)
+      run "'$SBAR' ${args[*]}"
+      ;;
+    apps)
+      step "[5/6] Applications"
+      args=()
+      (( APPS_NO_YAY==1 )) && args+=(--no-yay)
+      (( APPS_NO_FILES==1 )) && args+=(--no-files)
+      (( DRY_RUN==1 )) && args+=(--dry-run)
+      run "'$APPS' ${args[*]}"
+      ;;
+    optimize)
+      if (( OPTI_DISABLE==1 )); then warn "Skipping optimize by policy"; continue; fi
+      step "[6/6] Optimize (zram, journald, /tmp tmpfs, swappiness, pacman.conf)"
+      args=()
+      (( DRY_RUN==1 )) && args+=(--dry-run)
+      run "'$OPTI' ${args[*]}"
+      ;;
+    *)
+      warn "Unknown step: $stepname (skipping)";;
+  esac
+  say "Completed step: $stepname"
+done
 
-require_file "$SCRIPT_DIR/install_core.sh"
-require_file "$SCRIPT_DIR/install_optimize.sh"
-require_file "$SCRIPT_DIR/install_suckless.sh"
-require_file "$SCRIPT_DIR/install_apps.sh"
-require_file "$SCRIPT_DIR/install_statusbar.sh"
-# optional
-if [[ -f "$SCRIPT_DIR/install_themedots.sh" ]]; then
-  chmod +x "$SCRIPT_DIR/install_themedots.sh" || true
-fi
+cat <<'EOT'
+========================================================
+ALPI complete
 
-# -------------------- Run steps --------------------
-echo
-step "1/5 CORE  -> Base installation and system tasks"
-bash "$SCRIPT_DIR/install_core.sh"
-
-echo
-step "2/5 OPTI  -> Optimizations"
-bash "$SCRIPT_DIR/install_optimize.sh"
-
-echo
-step "3/5 SUCK  -> Build/Install suckless (dwm/dmenu/st etc.)"
-bash "$SCRIPT_DIR/install_suckless.sh"
-
-echo
-step "4/5 APPS  -> Install applications"
-bash "$SCRIPT_DIR/install_apps.sh"
-
-echo
-step "5/5 SBAR  -> Install status bar (~/.local/bin/dwm-status.sh)"
-bash "$SCRIPT_DIR/install_statusbar.sh"
-
-# -------------------- Sanity checks --------------------
-echo
-step "Verifying status bar & .xinitrc"
-if [[ -f "$HOME/.local/bin/dwm-status.sh" ]]; then
-  say  "OK: Found $HOME/.local/bin/dwm-status.sh"
-else
-  warn "Missing $HOME/.local/bin/dwm-status.sh (install_statusbar.sh may have aborted?)."
-fi
-
-if [[ -f "$HOME/.xinitrc" ]]; then
-  if grep -q "dwm-status.sh" "$HOME/.xinitrc"; then
-    say  "OK: .xinitrc launches the status bar."
-  else
-    warn ".xinitrc does not seem to start the status bar. Add:  ~/.local/bin/dwm-status.sh &"
-  fi
-else
-  warn "Missing $HOME/.xinitrc – verify that install_suckless.sh created it."
-fi
-
-# -------------------- Optional: theming & dotfiles --------------------
-if [ -x "$SCRIPT_DIR/install_themedots.sh" ]; then
-  echo
-  warn "Optional step: theming & dotfiles (bashrc, dunst, alacritty, rofi)."
-  read -rp "Run install_themedots.sh now? [y/N]: " _ans
-  _ans="${_ans:-N}"
-  if [[ "$_ans" =~ ^[Yy]$ ]]; then
-    say  "DOTS -> Applying theme & dotfiles"
-    bash "$SCRIPT_DIR/install_themedots.sh"
-  else
-    say  "Skipped theming/dots (run later if needed)."
-  fi
-else
-  warn "install_themedots.sh not found in $SCRIPT_DIR — skipping."
-fi
-
-echo
-step "ALPI finished."
-say  "Log out to TTY or reboot. Logging in on tty1 starts dwm via startx (if configured)."
+Order executed: core → lookandfeel → suckless → statusbar → apps → optimize
+• You can re-run safely; each script is idempotent and uses --needed/backups.
+• For custom flows, use --only or --skip. Example:
+  ./alpi.sh --only lookandfeel,suckless --nirucon --jobs 8
+========================================================
+EOT
