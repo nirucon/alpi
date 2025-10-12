@@ -155,6 +155,40 @@ else
   say "Scripts installed to $LOCAL_BIN"
 fi
 
+# --- Ensure Nerd Font for DWM & X ---
+echo ">>> Ensuring Nerd Font is configured for DWM and X globally..."
+
+# Make sure dir exists
+mkdir -p ~/.Xresources.d
+
+# Build/refresh font cache (safe to run)
+fc-cache -f >/dev/null 2>&1 || true
+
+# Xresources fallback (helps apps; DWM still needs fonts[])
+cat <<'EOF' > ~/.Xresources.d/99-nerdfont-fallback
+Xft.dpi: 96
+Xft.antialias: 1
+Xft.hinting: 1
+Xft.rgba: rgb
+Xft.hintstyle: hintslight
+Xft.lcdfilter: lcddefault
+
+Xft.font: JetBrainsMono Nerd Font:size=11
+EOF
+
+# Merge now (install-time) – also add a runtime hook in .xinitrc below
+xrdb -merge ~/.Xresources.d/99-nerdfont-fallback 2>/dev/null || true
+
+# Ensure X merges the fallback at session start (idempotent)
+if ! grep -q 'xrdb -merge ~/.Xresources.d/99-nerdfont-fallback' ~/.xinitrc 2>/dev/null; then
+  printf '\n# Ensure Nerd Font fallback at session start\nxrdb -merge ~/.Xresources.d/99-nerdfont-fallback 2>/dev/null\n' >> ~/.xinitrc
+fi
+
+# Optional: nudge statusbar to assume icons
+if ! grep -q 'DWM_STATUS_ASSUME_ICONS=1' ~/.xinitrc 2>/dev/null; then
+  printf 'export DWM_STATUS_ASSUME_ICONS=1\n' >> ~/.xinitrc
+fi
+
 # ───────── Install picom.conf ─────────
 # Accept common locations inside the repo.
 step "Placing picom.conf"
