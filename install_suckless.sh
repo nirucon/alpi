@@ -3,9 +3,6 @@
 # Purpose: Compile and install suckless programs with zero/own patches, wire a safe ~/.xinitrc,
 #          and (optionally) install minimal runtime deps & fonts if missing.
 # Author:  Nicklas Rudolfsson (NIRUCON)
-# Output:  Clear, English-only status messages. Safe & idempotent where possible.
-# Notes:   Picom *configuration* is handled by install_lookandfeel.sh to avoid conflicts.
-#          This script will NOT write picom.conf. It may install picom package if missing.
 
 set -Eeuo pipefail
 IFS=$'
