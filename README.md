@@ -1,6 +1,6 @@
 # alpi
 
-Post-install scripts for **vanilla Arch Linux** that set up my suckless-based desktop (dwm, st, dmenu, slock, slstatus), look & feel, apps, and a few safe optimizations.  
+Post-install scripts for **vanilla Arch Linux** that set up my suckless-based desktop (dwm, st, dmenu, slock, slstatus or custom status bar), look & feel, apps, and a few safe optimizations.  
 **Made for my own taste and workflow. No guarantees. Use at your own risk.**
 
 > **Disclaimer**  
