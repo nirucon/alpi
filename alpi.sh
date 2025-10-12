@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # alpi.sh — Arch Linux Post Install Orchestrator
-# Author: Nicklas Rudolfsson (NIRUCON)
+# Author: Nicklas Rudolfsson
 #
 # Orchestrates:
 #   core, apps, suckless, statusbar, lookandfeel, optimize
 #
 # Highlights:
 # - `--nirucon` correctly maps to `--source nirucon` for install_suckless.sh
-# - `--jobs` is forwarded ONLY to scripts that actually support it
-# - `--only` / `--skip` / `--dry-run` supported
+# - `--jobs` is forwarded ONLY to scripts that actually support it (static check)
+# - `lookandfeel` step clones from your desired repo (default: nirucon/suckless_lookandfeel)
+# - `optimize` auto-elevates with sudo if not root
+# - English-only logs and usage
 
 set -Eeuo pipefail
 
@@ -24,7 +26,7 @@ COLOR_ERR="\033[1;31m"
 say()  { printf "${COLOR_INFO}[*]${COLOR_RESET} %s\n" "$*"; }
 ok()   { printf "${COLOR_OK}[ok]${COLOR_RESET} %s\n" "$*"; }
 warn() { printf "${COLOR_WARN}[WARN]${COLOR_RESET} %s\n" "$*"; }
-err()  { printf "${COLOR_ERR}[ERR]${COLOR_RESET} %s\n" "$*" >&2; }
+err()  { printf "${COLOR_ERR}[ERR]${COLOR_RESET} %s\n" "$*"; }
 die()  { err "$@"; exit 1; }
 
 trap 'err "Aborted on line $LINENO (command: ${BASH_COMMAND:-unknown})"; exit 1' ERR
@@ -53,6 +55,11 @@ SCK_SOURCE="vanilla"    # vanilla | nirucon
 ASK_SUCKLESS=0
 SCK_NO_FONTS=0
 
+# Look&feel repo defaults (override via flags)
+LOOK_REPO_DEFAULT="https://github.com/nirucon/suckless_lookandfeel"
+LOOK_REPO="$LOOK_REPO_DEFAULT"
+LOOK_BRANCH="main"
+
 # Selection filters
 ONLY_STEPS=()
 SKIP_STEPS=()
@@ -71,34 +78,21 @@ ensure_exec() {
   fi
 }
 
-in_array() {
-  local needle="$1"; shift
-  local x
-  for x in "$@"; do [[ "$x" == "$needle" ]] && return 0; done
-  return 0 # (dummy, caller handles)
-}
-
 # Returns 0 (true) if the step should run
 should_run() {
   local step="$1"
   if ((${#ONLY_STEPS[@]} > 0)); then
-    local found=1
-    for s in "${ONLY_STEPS[@]}"; do
-      [[ "$s" == "$step" ]] && found=0 && break
-    done
-    (( found == 0 )) || return 1
+    local match=1
+    for s in "${ONLY_STEPS[@]}"; do [[ "$s" == "$step" ]] && match=0 && break; done
+    (( match == 0 )) || return 1
   fi
-  for s in "${SKIP_STEPS[@]}"; do
-    [[ "$s" == "$step" ]] && return 1
-  done
+  for s in "${SKIP_STEPS[@]}"; do [[ "$s" == "$step" ]] && return 1; done
   return 0
 }
 
-# Check if a script (by path) appears to support a given long flag
+# Static check if a script file contains a flag
 supports_flag() {
   local script="$1" flag="$2"
-  # Simple static check: look for the literal flag in the script
-  # This avoids invoking the script and works even in dry runs.
   grep -q -- "$flag" "$script" 2>/dev/null
 }
 
@@ -129,6 +123,9 @@ FLAGS:
   --ask-suckless         Let install_suckless.sh prompt (no --source forwarded)
   --no-fonts             Forward --no-fonts to install_suckless.sh
 
+  --look-repo URL        Look&feel repo (default: https://github.com/nirucon/suckless_lookandfeel)
+  --look-branch NAME     Look&feel branch (default: main)
+
   --jobs N               Parallel jobs (forwarded only to scripts that support --jobs)
   --dry-run              Print what would run without executing
 
@@ -144,6 +141,7 @@ EXAMPLES:
   ./alpi.sh --nirucon
   ./alpi.sh --only suckless,statusbar --nirucon --dry-run
   ./alpi.sh --skip apps --nirucon
+  ./alpi.sh --look-repo https://github.com/nirucon/suckless_lookandfeel --look-branch main
 EOF
 }
 
@@ -160,20 +158,18 @@ while (( $# )); do
     --vanilla)       SCK_SOURCE="vanilla"; shift ;;
     --ask-suckless)  ASK_SUCKLESS=1; shift ;;
     --no-fonts)      SCK_NO_FONTS=1; shift ;;
-    --jobs)
-      shift
-      [[ $# -gt 0 ]] || die "--jobs requires a value"
-      [[ "$1" =~ ^[0-9]+$ ]] || die "--jobs must be an integer"
-      JOBS="$1"; shift ;;
+
+    --look-repo)     shift; [[ $# -gt 0 ]] || die "--look-repo requires a URL"; LOOK_REPO="$1"; shift ;;
+    --look-branch)   shift; [[ $# -gt 0 ]] || die "--look-branch requires a name"; LOOK_BRANCH="$1"; shift ;;
+
+    --jobs)          shift; [[ $# -gt 0 ]] || die "--jobs requires a value"
+                     [[ "$1" =~ ^[0-9]+$ ]] || die "--jobs must be an integer"
+                     JOBS="$1"; shift ;;
     --dry-run)       DRY_RUN=1; shift ;;
-    --only)
-      shift
-      [[ $# -gt 0 ]] || die "--only requires a list"
-      IFS=',' read -r -a tmp <<< "$1"; ONLY_STEPS+=("${tmp[@]}"); shift ;;
-    --skip)
-      shift
-      [[ $# -gt 0 ]] || die "--skip requires a list"
-      IFS=',' read -r -a tmp <<< "$1"; SKIP_STEPS+=("${tmp[@]}"); shift ;;
+    --only)          shift; [[ $# -gt 0 ]] || die "--only requires a list"
+                     IFS=',' read -r -a tmp <<< "$1"; ONLY_STEPS+=("${tmp[@]}"); shift ;;
+    --skip)          shift; [[ $# -gt 0 ]] || die "--skip requires a list"
+                     IFS=',' read -r -a tmp <<< "$1"; SKIP_STEPS+=("${tmp[@]}"); shift ;;
     --help|-h)       usage; exit 0 ;;
     *)               die "Unknown flag: $1 (see --help)" ;;
   esac
@@ -186,6 +182,7 @@ say "Starting alpi.sh"
 say "Jobs:            $JOBS"
 say "Dry-run:         $DRY_RUN"
 say "Suckless source: $SCK_SOURCE (ask-suckless=$ASK_SUCKLESS, no-fonts=$SCK_NO_FONTS)"
+say "Look&feel repo:  $LOOK_REPO (branch=$LOOK_BRANCH)"
 ((${#ONLY_STEPS[@]} > 0)) && say "Only steps:      ${ONLY_STEPS[*]}"
 ((${#SKIP_STEPS[@]} > 0)) && say "Skip steps:      ${SKIP_STEPS[*]}"
 
@@ -203,10 +200,8 @@ step_core() {
   should_run core || { warn "Skipping core"; return 0; }
   say "==> Step: core"
   local args=()
-  # Forward only supported flags
   supports_flag "$CORE" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
-  # Do NOT forward --jobs unless supported; most cores do not support it
-  supports_flag "$CORE" "--jobs"   && args+=(--jobs "$JOBS")
+  supports_flag "$CORE" "--jobs"    && args+=(--jobs "$JOBS")
   run_user "$CORE" "${args[@]}"
 }
 
@@ -223,13 +218,11 @@ step_suckless() {
   should_run suckless || { warn "Skipping suckless"; return 0; }
   say "==> Step: suckless"
   local args=()
-  # Many suckless installers support these:
-  supports_flag "$SUCK" "--jobs"    && args+=(--jobs "$JOBS")
-  supports_flag "$SUCK" "--no-fonts" && (( SCK_NO_FONTS == 1 )) && args+=(--no-fonts)
-  supports_flag "$SUCK" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
+  supports_flag "$SUCK" "--jobs"      && args+=(--jobs "$JOBS")
+  supports_flag "$SUCK" "--no-fonts"  && (( SCK_NO_FONTS == 1 )) && args+=(--no-fonts)
+  supports_flag "$SUCK" "--dry-run"   && (( DRY_RUN == 1 )) && args+=(--dry-run)
 
   if (( ASK_SUCKLESS == 0 )); then
-    # Only add --source if the script supports it
     if supports_flag "$SUCK" "--source"; then
       args+=(--source "$SCK_SOURCE")
     else
@@ -255,8 +248,7 @@ step_statusbar() {
 step_lookandfeel() {
   should_run lookandfeel || { warn "Skipping lookandfeel"; return 0; }
   say "==> Step: lookandfeel"
-  local args=()
-  supports_flag "$LOOK" "--jobs"    && args+=(--jobs "$JOBS")
+  local args=( --repo "$LOOK_REPO" --branch "$LOOK_BRANCH" )
   supports_flag "$LOOK" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
   run_user "$LOOK" "${args[@]}"
 }
@@ -267,7 +259,13 @@ step_optimize() {
   local args=()
   supports_flag "$OPTM" "--jobs"    && args+=(--jobs "$JOBS")
   supports_flag "$OPTM" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
-  run_user "$OPTM" "${args[@]}"
+
+  if (( EUID != 0 )); then
+    warn "Step 'optimize' may require root — running with sudo."
+    run_user sudo "$OPTM" "${args[@]}"
+  else
+    run_user "$OPTM" "${args[@]}"
+  fi
 }
 
 #######################################
@@ -285,4 +283,4 @@ for step in "${ALL_STEPS[@]}"; do
   esac
 done
 
-ok "All selected steps completed."
+ok "All selected steps completed. Reboot is recommended!"
