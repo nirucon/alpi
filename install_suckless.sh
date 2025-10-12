@@ -34,23 +34,22 @@ DMENU_REPO_VANILLA="https://git.suckless.org/dmenu"
 SLOCK_REPO_VANILLA="https://git.suckless.org/slock"
 SLSTATUS_REPO_VANILLA="https://git.suckless.org/slstatus"
 
-# NIRUCON mono-repo (components are subdirs)
+# NIRUCON mono-repo
 NIRUCON_REPO="https://github.com/nirucon/suckless"
 
-SOURCE_MODE="vanilla"   # vanilla | nirucon
+SOURCE_MODE=""          # vanilla|nirucon (empty → decide later)
 MANAGE_XINIT=1
-INSTALL_FONTS=1         # only if missing
+INSTALL_FONTS=1
 DRY_RUN=0
 COMPONENTS=(dwm st dmenu slock slstatus)
 
-# Fonts used by theme/status/icons
 FONT_MAIN="JetBrainsMono Nerd Font"
 FONT_ICON="Symbols Nerd Font Mono"
 
 usage(){ cat <<'EOF'
 install_suckless.sh — options
-  --source MODE      vanilla | nirucon  (default: vanilla)
-  --prefix DIR       Install prefix for make install (default: /usr/local)
+  --source MODE      vanilla | nirucon   (if omitted, you will be asked in a TTY; otherwise default vanilla)
+  --prefix DIR       Install prefix (default: /usr/local)
   --only LIST        Comma-separated subset: dwm,st,dmenu,slock,slstatus
   --no-xinit         Do NOT modify ~/.xinitrc
   --no-fonts         Do NOT attempt to install fonts
@@ -61,7 +60,6 @@ EOF
 }
 
 need_val(){ local opt="$1" val="${2-}"; [[ -n "$val" ]] || fail "Option $opt requires a value. See --help."; }
-
 parse_components(){ IFS=',' read -r -a COMPONENTS <<<"$1"; }
 
 while [[ $# -gt 0 ]]; do
@@ -77,6 +75,20 @@ while [[ $# -gt 0 ]]; do
     *) warn "Unknown argument: $1"; usage; exit 1;;
   esac
 done
+
+# Decide source if not specified
+if [[ -z "$SOURCE_MODE" ]]; then
+  if [[ -t 0 ]]; then
+    say "Choose suckless source:"
+    echo "  1) Vanilla (upstream) — zero modifications [default]"
+    echo "  2) Custom (NIRUCON repo) — your patched tree"
+    read -rp "Enter 1 or 2 [1]: " choice
+    choice="${choice:-1}"
+    if [[ "$choice" == "2" ]]; then SOURCE_MODE="nirucon"; else SOURCE_MODE="vanilla"; fi
+  else
+    SOURCE_MODE="vanilla"
+  fi
+fi
 
 # ───────── Helpers (array-safe) ─────────
 ts(){ date +"%Y%m%d-%H%M%S"; }
@@ -105,7 +117,6 @@ fonts_install_if_missing(){
   fc-list | grep -qi "${FONT_MAIN}"  && need_main=0 || true
   fc-list | grep -qi "${FONT_ICON}"  && need_icon=0 || true
   (( need_main==0 && need_icon==0 )) && { say "Required fonts already installed"; return 0; }
-
   if (( need_icon==1 )) && command -v pacman >/dev/null 2>&1; then
     say "Installing ${FONT_ICON} via pacman"
     run sudo pacman -S --needed --noconfirm ttf-nerd-fonts-symbols-mono || true
@@ -124,7 +135,6 @@ fonts_install_if_missing(){
 }
 
 clone_or_pull(){
-  # $1=url, $2=dir
   local url="$1" dir="$2"
   if [[ -d "$dir/.git" ]]; then
     step "Updating $(basename "$dir")"
@@ -144,7 +154,7 @@ make_install(){
                 || { make clean && make -j"$JOBS" && sudo make PREFIX="$PREFIX" install; }; } )
 }
 
-# ───────── Prepare dirs & deps ─────────
+# ───────── Prepare & deps ─────────
 ensure_dir "$SUCKLESS_DIR" "$LOCAL_BIN" "$BUILD_DIR"
 pkg_install
 fonts_install_if_missing
@@ -160,10 +170,10 @@ case "$SOURCE_MODE" in
     clone_or_pull "$SLSTATUS_REPO_VANILLA" "$SUCKLESS_DIR/slstatus"
     ;;
   nirucon)
-    say "Source mode: NIRUCON (github.com/nirucon/suckless)"
+    say "Source mode: CUSTOM (NIRUCON repo)"
     clone_or_pull "$NIRUCON_REPO" "$SUCKLESS_DIR"
     ;;
-  *) fail "Unknown --source value: $SOURCE_MODE";;
+  *) fail "Unknown source mode: $SOURCE_MODE";;
 esac
 
 # ───────── Build & install ─────────
@@ -175,52 +185,22 @@ for comp in "${COMPONENTS[@]}"; do
   fi
 done
 
-# ───────── .xinitrc wiring (idempotent, includes your hooks) ─────────
+# ───────── .xinitrc wiring ─────────
 if [[ $MANAGE_XINIT -eq 1 ]]; then
   step "Wiring ~/.xinitrc (safe, minimal)"
   if [[ ! -f "$XINIT" ]]; then
     cat > "$XINIT" <<'EOF'
 #!/bin/sh
-# ────────────────────────────────────────────────
-# Nicklas Rudolfsson — minimal xinit for dwm
-# ────────────────────────────────────────────────
 cd "$HOME"
 setxkbmap se
 xsetroot -solid "#111111"
-
-# Restore wallpaper (if Nitrogen present)
-if command -v nitrogen >/dev/null; then
-  nitrogen --restore &
-fi
-
-# Rotating wallpapers every 15 minutes (if script exists)
-# Script: ~/.local/bin/wallrotate.sh
-if [ -x "$HOME/.local/bin/wallrotate.sh" ]; then
-  "$HOME/.local/bin/wallrotate.sh" &
-fi
-
-# Nextcloud sync client (if installed)
-if command -v nextcloud >/dev/null; then
-  nextcloud --background &
-fi
-
-# Start compositor if available (config handled by install_lookandfeel.sh)
-if command -v picom >/dev/null; then
-  picom --experimental-backends &
-fi
-
-# Start status bar if installed (installed by install_statusbar.sh)
+command -v nitrogen >/dev/null && nitrogen --restore &
+[ -x "$HOME/.local/bin/wallrotate.sh" ] && "$HOME/.local/bin/wallrotate.sh" &
+command -v nextcloud >/dev/null && nextcloud --background &
+command -v picom >/dev/null && picom --experimental-backends &
 [ -x "$HOME/.local/bin/dwm-status.sh" ] && "$HOME/.local/bin/dwm-status.sh" &
-
-# Auto-lock after 10 min if tools are present
-if command -v xautolock >/dev/null && command -v slock >/dev/null; then
-  xautolock -time 10 -locker slock &
-fi
-
-# Cleanup children on exit
+if command -v xautolock >/dev/null && command -v slock >/dev/null; then xautolock -time 10 -locker slock & fi
 trap 'kill -- -$$' EXIT
-
-# Auto-restart dwm and log; robust path resolution
 while true; do
   "$(command -v dwm || echo /usr/local/bin/dwm)" 2> /tmp/dwm.log
 done
@@ -245,8 +225,8 @@ cat <<'EOT'
 Suckless install finished
 
 • Components built: dwm/st/dmenu/slock/slstatus (customize with --only)
-• picom.conf was not modified (managed by install_lookandfeel.sh)
-• Status bar hook present; run install_statusbar.sh to install bar script
+• picom.conf is managed by install_lookandfeel.sh
+• Status bar script is installed by install_statusbar.sh
 • Start X with:  startx
 ========================================================
 EOT
