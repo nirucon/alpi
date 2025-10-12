@@ -197,7 +197,7 @@ xsetroot -solid "#111111"
 command -v nitrogen >/dev/null && nitrogen --restore &
 [ -x "$HOME/.local/bin/wallrotate.sh" ] && "$HOME/.local/bin/wallrotate.sh" &
 command -v nextcloud >/dev/null && nextcloud --background &
-command -v picom >/dev/null && picom --experimental-backends &
+command -v picom >/dev/null && picom &
 [ -x "$HOME/.local/bin/dwm-status.sh" ] && "$HOME/.local/bin/dwm-status.sh" &
 if command -v xautolock >/dev/null && command -v slock >/dev/null; then xautolock -time 10 -locker slock & fi
 trap 'kill -- -$$' EXIT
