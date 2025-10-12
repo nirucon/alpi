@@ -99,7 +99,6 @@ PACMAN_PKGS_BASE=(
   jq                 #
   fzf                #
   btop               # sysinfo
-  localsend          # 
 
   # Neovim + tooling (LazyVim deps)
   neovim
@@ -117,6 +116,7 @@ YAY_PKGS_BASE=(
   spotify                  # music (cmus is better ofc)
   xautolock                # lock screen
   timeshift-autosnap       # snaps
+  localsend                # files
 )
 
 # ───────── Optional extension via files ─────────
