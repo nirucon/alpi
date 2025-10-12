@@ -25,12 +25,12 @@ command -v pacman >/dev/null 2>&1 || { fail "This orchestrator targets Arch (pac
 DRY_RUN=0
 STEPS=(core lookandfeel suckless statusbar apps optimize)
 SCK_SOURCE="vanilla"    # vanilla|nirucon for install_suckless.sh
-SCK_NO_FONTS=0           # pass --no-fonts to install_suckless.sh
-CORE_NO_SNAPSHOTS=0      # pass --no-snapshots to install_core.sh
-CORE_NO_UPGRADE=0        # pass --no-upgrade to install_core.sh
-APPS_NO_YAY=0            # pass --no-yay to install_apps.sh
-APPS_NO_FILES=0          # pass --no-files to install_apps.sh
-OPTI_DISABLE=0           # skip optimize step
+SCK_NO_FONTS=0          # pass --no-fonts to install_suckless.sh
+CORE_NO_SNAPSHOTS=0     # pass --no-snapshots to install_core.sh
+CORE_NO_UPGRADE=0       # pass --no-upgrade to install_core.sh
+APPS_NO_YAY=0           # pass --no-yay to install_apps.sh
+APPS_NO_FILES=0         # pass --no-files to install_apps.sh
+OPTI_DISABLE=0          # skip optimize step
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
@@ -59,8 +59,21 @@ EOF
 
 parse_csv(){ local IFS=","; read -r -a _arr <<<"$1"; printf '%s\n' "${_arr[@]}"; }
 contains(){ local n=$1; shift; for e; do [[ $e == "$n" ]] && return 0; done; return 1; }
-run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else eval "$@"; fi }
-ensure_x(){ local f="$1"; [[ -x "$f" ]] || run "chmod +x '$f'"; }
+
+# Array-safe runner:
+# * One argument → run in a shell (allows pipes/&& for rare cases).
+# * Multiple arguments → exec exactly (no word-splitting; perfect for "${arr[@]}").
+run(){
+  if [[ $DRY_RUN -eq 1 ]]; then
+    printf "${CYN}[ALPI]${NC} [dry-run] %s\n" "$*"
+  else
+    if [[ $# -eq 1 ]]; then
+      bash -lc "$1"
+    else
+      "$@"
+    fi
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -89,7 +102,7 @@ OPTI="$SCRIPT_DIR/install_optimize.sh"
 
 for f in "$LOOK" "$SUCK" "$SBAR" "$CORE" "$APPS" "$OPTI"; do
   [[ -f "$f" ]] || { fail "Missing script: $f"; }
-  ensure_x "$f"
+  chmod +x "$f" || true
 done
 
 say "Starting ALPI orchestration"
@@ -105,27 +118,27 @@ for stepname in "${STEPS[@]}"; do
       (( CORE_NO_SNAPSHOTS==1 )) && args+=(--no-snapshots)
       (( CORE_NO_UPGRADE==1 ))   && args+=(--no-upgrade)
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run "'$CORE' ${args[*]}"
+      run "$CORE" "${args[@]}"
       ;;
     lookandfeel)
       step "[2/6] Look & Feel (dotfiles, scripts, picom.conf)"
       args=()
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run "'$LOOK' ${args[*]}"
+      run "$LOOK" "${args[@]}"
       ;;
     suckless)
       step "[3/6] Suckless stack (dwm, st, dmenu, slock, slstatus)"
       args=(--jobs "$JOBS" --source "$SCK_SOURCE")
       (( SCK_NO_FONTS==1 )) && args+=(--no-fonts)
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run "'$SUCK' ${args[*]}"
+      run "$SUCK" "${args[@]}"
       ;;
     statusbar)
       step "[4/6] Status bar (dwm-status.sh)"
       args=()
       # Do NOT add --hook-xinit; .xinitrc is managed by install_suckless.sh
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run "'$SBAR' ${args[*]}"
+      run "$SBAR" "${args[@]}"
       ;;
     apps)
       step "[5/6] Applications"
@@ -133,14 +146,14 @@ for stepname in "${STEPS[@]}"; do
       (( APPS_NO_YAY==1 )) && args+=(--no-yay)
       (( APPS_NO_FILES==1 )) && args+=(--no-files)
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run "'$APPS' ${args[*]}"
+      run "$APPS" "${args[@]}"
       ;;
     optimize)
       if (( OPTI_DISABLE==1 )); then warn "Skipping optimize by policy"; continue; fi
       step "[6/6] Optimize (zram, journald, /tmp tmpfs, swappiness, pacman.conf)"
       args=()
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run "'$OPTI' ${args[*]}"
+      run "$OPTI" "${args[@]}"
       ;;
     *)
       warn "Unknown step: $stepname (skipping)";;
