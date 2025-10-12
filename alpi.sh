@@ -4,7 +4,7 @@
 # Author:  Nicklas Rudolfsson (NIRUCON)
 # Notes:
 #   • Run this script as a NORMAL USER (not root).
-#   • Steps that need root either handle sudo internally (core/apps) or are invoked via sudo here (optimize).
+#   • Core/Apps run as user (they use sudo inside). Optimize runs via sudo here.
 #   • Idempotent: safe to re-run.
 
 set -Eeuo pipefail
@@ -99,7 +99,7 @@ OPTI="$SCRIPT_DIR/install_optimize.sh"
 for f in "$LOOK" "$SUCK" "$SBAR" "$CORE" "$APPS" "$OPTI"; do
   [[ -f "$f" ]] || fail "Missing script: $f"
   chmod +x "$f" || true
-endone
+done
 
 say "Starting ALPI orchestration"
 
