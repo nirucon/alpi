@@ -95,7 +95,7 @@ BASE_PKGS=(
   # CLI & dev
   base base-devel git make gcc pkgconf curl wget unzip zip tar rsync
   grep sed findutils coreutils which diffutils gawk
-  htop less nano vim man-db man-pages tree
+  htop less nano tree imlib2
 
   # Shell helpers
   bash-completion
