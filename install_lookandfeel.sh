@@ -132,7 +132,7 @@ declare -A SPECIAL_MAP=(
   ["$DEST_DIR/picom.conf"]="$HOME/.config/picom/picom.conf"
   ["$DEST_DIR/alacritty.toml"]="$HOME/.config/alacritty/alacritty.toml"
   ["$DEST_DIR/dunstrc"]="$HOME/.config/dunst/dunstrc"
-  ["$DEST_DIR/Black-Metal.rasi"]="$HOME/.config/rofi/themes/Black-Metal.rasi"
+  ["$DEST_DIR/Black-Metal.rasi"]="/usr/share/rofi/themes/Black-Metal.rasi"
   ["$DEST_DIR/config.rasi"]="$HOME/.config/rofi/config.rasi"
 )
 for src in "${!SPECIAL_MAP[@]}"; do
