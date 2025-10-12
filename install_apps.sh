@@ -116,6 +116,7 @@ YAY_PKGS_BASE=(
   brave-bin                # browser
   spotify                  # music (cmus is better ofc)
   xautolock                # lock screen
+  timeshift-autosnap       # snaps
 )
 
 # ───────── Optional extension via files ─────────
