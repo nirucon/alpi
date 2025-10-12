@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # alpi.sh — Arch Linux Post Install Orchestrator
-# Version: 2025-10-12
-# Author: You
+# Author: Nicklas Rudolfsson (NIRUCON)
 #
-# This orchestrates your post-install steps:
+# Orchestrates:
 #   core, apps, suckless, statusbar, lookandfeel, optimize
 #
-# Key guarantees:
-# - `--nirucon` sets SCK_SOURCE=nirucon and forwards `--source nirucon` to install_suckless.sh
-# - If `--ask-suckless` is used, no `--source` is sent (install_suckless.sh will prompt)
-# - `--only`/`--skip` to control steps; `--dry-run` prints commands only
-# - Clear, English-only logs and help text
+# Highlights:
+# - `--nirucon` correctly maps to `--source nirucon` for install_suckless.sh
+# - `--jobs` is forwarded ONLY to scripts that actually support it
+# - `--only` / `--skip` / `--dry-run` supported
 
 set -Eeuo pipefail
 
@@ -25,8 +23,8 @@ COLOR_ERR="\033[1;31m"
 
 say()  { printf "${COLOR_INFO}[*]${COLOR_RESET} %s\n" "$*"; }
 ok()   { printf "${COLOR_OK}[ok]${COLOR_RESET} %s\n" "$*"; }
-warn() { printf "${COLOR_WARN}[!]${COLOR_RESET} %s\n" "$*"; }
-err()  { printf "${COLOR_ERR}[x]${COLOR_RESET} %s\n" "$*" >&2; }
+warn() { printf "${COLOR_WARN}[WARN]${COLOR_RESET} %s\n" "$*"; }
+err()  { printf "${COLOR_ERR}[ERR]${COLOR_RESET} %s\n" "$*" >&2; }
 die()  { err "$@"; exit 1; }
 
 trap 'err "Aborted on line $LINENO (command: ${BASH_COMMAND:-unknown})"; exit 1' ERR
@@ -42,22 +40,21 @@ STAT="${SCRIPT_DIR}/install_statusbar.sh"
 LOOK="${SCRIPT_DIR}/install_lookandfeel.sh"
 OPTM="${SCRIPT_DIR}/install_optimize.sh"
 
-# Default execution order
 ALL_STEPS=(core apps suckless statusbar lookandfeel optimize)
 
 #######################################
-# Defaults (overridable by flags)
+# Defaults
 #######################################
 JOBS="$(command -v nproc &>/dev/null && nproc || echo 2)"
 DRY_RUN=0
 
 # Suckless controls
-SCK_SOURCE="vanilla"    # "vanilla" | "nirucon"
-ASK_SUCKLESS=0          # 1 = let install_suckless.sh prompt (omit --source)
+SCK_SOURCE="vanilla"    # vanilla | nirucon
+ASK_SUCKLESS=0
 SCK_NO_FONTS=0
 
 # Selection filters
-ONLY_STEPS=()           # empty => run ALL_STEPS
+ONLY_STEPS=()
 SKIP_STEPS=()
 
 #######################################
@@ -78,16 +75,31 @@ in_array() {
   local needle="$1"; shift
   local x
   for x in "$@"; do [[ "$x" == "$needle" ]] && return 0; done
-  return 1
+  return 0 # (dummy, caller handles)
 }
 
+# Returns 0 (true) if the step should run
 should_run() {
   local step="$1"
   if ((${#ONLY_STEPS[@]} > 0)); then
-    in_array "$step" "${ONLY_STEPS[@]}" || return 0 && return 1
+    local found=1
+    for s in "${ONLY_STEPS[@]}"; do
+      [[ "$s" == "$step" ]] && found=0 && break
+    done
+    (( found == 0 )) || return 1
   fi
-  in_array "$step" "${SKIP_STEPS[@]}" && return 1
+  for s in "${SKIP_STEPS[@]}"; do
+    [[ "$s" == "$step" ]] && return 1
+  done
   return 0
+}
+
+# Check if a script (by path) appears to support a given long flag
+supports_flag() {
+  local script="$1" flag="$2"
+  # Simple static check: look for the literal flag in the script
+  # This avoids invoking the script and works even in dry runs.
+  grep -q -- "$flag" "$script" 2>/dev/null
 }
 
 run_user() {
@@ -111,13 +123,13 @@ alpi.sh — Orchestrate post-install steps
 USAGE:
   ./alpi.sh [flags]
 
-COMMON FLAGS:
-  --nirucon              Use your nirucon/suckless repo for suckless (forwards --source nirucon)
+FLAGS:
+  --nirucon              Use nirucon/suckless repo (forwards --source nirucon to install_suckless.sh)
   --vanilla              Force vanilla suckless (forwards --source vanilla)
-  --ask-suckless         Let install_suckless.sh prompt (will NOT send --source)
+  --ask-suckless         Let install_suckless.sh prompt (no --source forwarded)
   --no-fonts             Forward --no-fonts to install_suckless.sh
 
-  --jobs N               Parallel jobs (default: nproc)
+  --jobs N               Parallel jobs (forwarded only to scripts that support --jobs)
   --dry-run              Print what would run without executing
 
   --only <list>          Run only these steps (comma-separated or repeat the flag)
@@ -129,13 +141,8 @@ STEPS (for --only/--skip):
   core, apps, suckless, statusbar, lookandfeel, optimize
 
 EXAMPLES:
-  # Full run with nirucon suckless:
   ./alpi.sh --nirucon
-
-  # Suckless + statusbar only, dry run:
   ./alpi.sh --only suckless,statusbar --nirucon --dry-run
-
-  # Run everything but skip apps:
   ./alpi.sh --skip apps --nirucon
 EOF
 }
@@ -149,36 +156,26 @@ fi
 
 while (( $# )); do
   case "$1" in
-    --nirucon)
-      SCK_SOURCE="nirucon"; shift ;;
-    --vanilla)
-      SCK_SOURCE="vanilla"; shift ;;
-    --ask-suckless)
-      ASK_SUCKLESS=1; shift ;;
-    --no-fonts)
-      SCK_NO_FONTS=1; shift ;;
+    --nirucon)       SCK_SOURCE="nirucon"; shift ;;
+    --vanilla)       SCK_SOURCE="vanilla"; shift ;;
+    --ask-suckless)  ASK_SUCKLESS=1; shift ;;
+    --no-fonts)      SCK_NO_FONTS=1; shift ;;
     --jobs)
       shift
       [[ $# -gt 0 ]] || die "--jobs requires a value"
       [[ "$1" =~ ^[0-9]+$ ]] || die "--jobs must be an integer"
       JOBS="$1"; shift ;;
-    --dry-run)
-      DRY_RUN=1; shift ;;
+    --dry-run)       DRY_RUN=1; shift ;;
     --only)
       shift
-      [[ $# -gt 0 ]] || die "--only requires a comma-separated list or repeat the flag"
-      IFS=',' read -r -a tmp <<< "$1"
-      ONLY_STEPS+=("${tmp[@]}"); shift ;;
+      [[ $# -gt 0 ]] || die "--only requires a list"
+      IFS=',' read -r -a tmp <<< "$1"; ONLY_STEPS+=("${tmp[@]}"); shift ;;
     --skip)
       shift
-      [[ $# -gt 0 ]] || die "--skip requires a comma-separated list or repeat the flag"
-      IFS=',' read -r -a tmp <<< "$1"
-      SKIP_STEPS+=("${tmp[@]}"); shift ;;
-    --help|-h)
-      usage; exit 0 ;;
-    *)
-      die "Unknown flag: $1 (see --help)"
-      ;;
+      [[ $# -gt 0 ]] || die "--skip requires a list"
+      IFS=',' read -r -a tmp <<< "$1"; SKIP_STEPS+=("${tmp[@]}"); shift ;;
+    --help|-h)       usage; exit 0 ;;
+    *)               die "Unknown flag: $1 (see --help)" ;;
   esac
 done
 
@@ -205,31 +202,41 @@ ensure_exec "$OPTM"
 step_core() {
   should_run core || { warn "Skipping core"; return 0; }
   say "==> Step: core"
-  local args=(--jobs "$JOBS")
-  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  local args=()
+  # Forward only supported flags
+  supports_flag "$CORE" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
+  # Do NOT forward --jobs unless supported; most cores do not support it
+  supports_flag "$CORE" "--jobs"   && args+=(--jobs "$JOBS")
   run_user "$CORE" "${args[@]}"
 }
 
 step_apps() {
   should_run apps || { warn "Skipping apps"; return 0; }
   say "==> Step: apps"
-  local args=(--jobs "$JOBS")
-  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  local args=()
+  supports_flag "$APPS" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
+  supports_flag "$APPS" "--jobs"    && args+=(--jobs "$JOBS")
   run_user "$APPS" "${args[@]}"
 }
 
 step_suckless() {
   should_run suckless || { warn "Skipping suckless"; return 0; }
   say "==> Step: suckless"
-  local args=(--jobs "$JOBS")
-  (( SCK_NO_FONTS == 1 )) && args+=(--no-fonts)
-  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  local args=()
+  # Many suckless installers support these:
+  supports_flag "$SUCK" "--jobs"    && args+=(--jobs "$JOBS")
+  supports_flag "$SUCK" "--no-fonts" && (( SCK_NO_FONTS == 1 )) && args+=(--no-fonts)
+  supports_flag "$SUCK" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
 
-  # Critical: only send --source when NOT in ask mode
   if (( ASK_SUCKLESS == 0 )); then
-    args+=(--source "$SCK_SOURCE")
+    # Only add --source if the script supports it
+    if supports_flag "$SUCK" "--source"; then
+      args+=(--source "$SCK_SOURCE")
+    else
+      warn "install_suckless.sh does not advertise --source; continuing without it."
+    fi
   else
-    warn "ask-suckless is active: not sending --source (install_suckless.sh will prompt)."
+    warn "ask-suckless is active: not sending --source (installer will prompt)."
   fi
 
   say "Resolved suckless source: $SCK_SOURCE (ask=$ASK_SUCKLESS)"
@@ -239,29 +246,32 @@ step_suckless() {
 step_statusbar() {
   should_run statusbar || { warn "Skipping statusbar"; return 0; }
   say "==> Step: statusbar"
-  local args=(--jobs "$JOBS")
-  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  local args=()
+  supports_flag "$STAT" "--jobs"    && args+=(--jobs "$JOBS")
+  supports_flag "$STAT" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
   run_user "$STAT" "${args[@]}"
 }
 
 step_lookandfeel() {
   should_run lookandfeel || { warn "Skipping lookandfeel"; return 0; }
   say "==> Step: lookandfeel"
-  local args=(--jobs "$JOBS")
-  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  local args=()
+  supports_flag "$LOOK" "--jobs"    && args+=(--jobs "$JOBS")
+  supports_flag "$LOOK" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
   run_user "$LOOK" "${args[@]}"
 }
 
 step_optimize() {
   should_run optimize || { warn "Skipping optimize"; return 0; }
   say "==> Step: optimize"
-  local args=(--jobs "$JOBS")
-  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  local args=()
+  supports_flag "$OPTM" "--jobs"    && args+=(--jobs "$JOBS")
+  supports_flag "$OPTM" "--dry-run" && (( DRY_RUN == 1 )) && args+=(--dry-run)
   run_user "$OPTM" "${args[@]}"
 }
 
 #######################################
-# Execute according to order/filters
+# Execute in order
 #######################################
 for step in "${ALL_STEPS[@]}"; do
   case "$step" in
@@ -275,4 +285,4 @@ for step in "${ALL_STEPS[@]}"; do
   esac
 done
 
-ok "All selected steps completed. Reboot is recommended!"
+ok "All selected steps completed."
