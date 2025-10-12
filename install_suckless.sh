@@ -1,35 +1,30 @@
 #!/usr/bin/env bash
-# install_suckless.sh — build & install the suckless stack (dwm, st, dmenu, slock, slstatus)
+# install_suckless.sh — build & install the suckless stack (dwm, st, dmenu, slock)
 # Purpose: Compile and install suckless programs with zero/own patches, wire a safe ~/.xinitrc,
-#          and (optionally) install minimal runtime deps & fonts if missing.
+#          and (optionally) install minimal deps & fonts if missing.
 # Author:  Nicklas Rudolfsson (NIRUCON)
 
 set -Eeuo pipefail
-IFS=$'
-	'
+IFS=$'\n\t'
 
 # ───────── Pretty logging ─────────
-MAG="[1;35m"; YLW="[1;33m"; RED="[1;31m"; BLU="[1;34m"; GRN="[1;32m"; NC="[0m"
-say()  { printf "${MAG}[SUCK]${NC} %s
-" "$*"; }
-step() { printf "${BLU}==>${NC} %s
-" "$*"; }
-warn() { printf "${YLW}[WARN]${NC} %s
-" "$*"; }
-fail() { printf "${RED}[FAIL]${NC} %s
-" "$*" >&2; }
+MAG="\033[1;35m"; YLW="\033[1;33m"; RED="\033[1;31m"; BLU="\033[1;34m"; GRN="\033[1;32m"; NC="\033[0m"
+say()  { printf "${MAG}[SUCK]${NC} %s\n" "$*"; }
+step() { printf "${BLU}==>${NC} %s\n" "$*"; }
+warn() { printf "${YLW}[WARN]${NC} %s\n" "$*"; }
+fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
 trap 'fail "install_suckless.sh failed. See previous messages for details."' ERR
 
 # ───────── Safety ─────────
 if [ "${EUID:-$(id -u)}" -eq 0 ]; then
-  fail "Do not run as root. This script writes to HOME and uses sudo only when needed."; exit 1
+  fail "Do not run as root. This script compiles in HOME and uses sudo only when needed."; exit 1
 fi
-command -v sudo >/dev/null 2>&1 || warn "sudo not found — system installs may be skipped."
+command -v sudo >/dev/null 2>&1 || warn "sudo not found — system install steps may be skipped."
 
 # ───────── Paths / Defaults ─────────
 SUCKLESS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/suckless"
-LOCAL_BIN="${HOME}/.local/bin"
-XINIT="${HOME}/.xinitrc"
+LOCAL_BIN="$HOME/.local/bin"
+XINIT="$HOME/.xinitrc"
 BUILD_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/suckless-build"
 PREFIX="/usr/local"
 JOBS="$(nproc 2>/dev/null || echo 2)"
@@ -46,10 +41,11 @@ NIRUCON_REPO="https://github.com/nirucon/suckless"
 
 SOURCE_MODE="vanilla"   # vanilla | nirucon
 MANAGE_XINIT=1
-INSTALL_FONTS=1          # can be disabled; only installs if fonts are missing
+INSTALL_FONTS=1         # can be disabled; only installs if fonts are missing
 DRY_RUN=0
 COMPONENTS=(dwm st dmenu slock slstatus)
 
+# Fonts used by theme/status/icons
 FONT_MAIN="JetBrainsMono Nerd Font"
 FONT_ICON="Symbols Nerd Font Mono"
 
@@ -65,8 +61,8 @@ install_suckless.sh — options
   -h|--help          Show this help
 
 Design:
-• Picom.conf is NOT managed here (handled by install_lookandfeel.sh).
-• Status bar content is provided by install_statusbar.sh; we only ensure hooks.
+• picom.conf is NOT managed here (install_lookandfeel.sh).
+• Status bar content comes from install_statusbar.sh; we only ensure hooks in .xinitrc.
 • Non-interactive by default (safe for running in a series by alpi.sh).
 EOF
 }
@@ -96,7 +92,10 @@ backup_if_exists(){ local f="$1"; [[ -e "$f" ]] || return 0; local b="${f}.bak.$
 
 pkg_install(){
   # Best-effort deps for building & runtime
-  local pkgs=(base-devel git make gcc pkgconf libx11 libxft libxinerama libxrandr libxext libxrender libxfixes freetype2 fontconfig xorg-xsetroot picom xautolock)
+  local pkgs=(base-devel git make gcc pkgconf
+              libx11 libxft libxinerama libxrandr libxext libxrender libxfixes
+              freetype2 fontconfig
+              xorg-xsetroot xorg-xinit)
   if command -v pacman >/dev/null 2>&1; then
     step "Installing build/runtime dependencies via pacman (if missing)"
     if [[ $DRY_RUN -eq 1 ]]; then
@@ -126,7 +125,9 @@ fonts_install_if_missing(){
   if (( need_main==1 )); then
     if ! command -v yay >/dev/null 2>&1; then
       step "Installing yay-bin (AUR helper) to fetch ${FONT_MAIN}"
-      local tmp; tmp="$(mktemp -d)"; (cd "$tmp" && run "git clone https://aur.archlinux.org/yay-bin.git" && cd yay-bin && run "makepkg -si --noconfirm"); rm -rf "$tmp"
+      local tmp; tmp="$(mktemp -d)"
+      (cd "$tmp" && run "git clone https://aur.archlinux.org/yay-bin.git" && cd yay-bin && run "makepkg -si --noconfirm")
+      rm -rf "$tmp"
     fi
     say "Installing ${FONT_MAIN} via yay"
     run "yay --noconfirm --needed -S ttf-jetbrains-mono-nerd || true"
@@ -165,10 +166,10 @@ fonts_install_if_missing
 case "$SOURCE_MODE" in
   vanilla)
     say "Source mode: VANILLA (upstream)"
-    clone_or_pull "$DWM_REPO_VANILLA"   "$SUCKLESS_DIR/dwm"
-    clone_or_pull "$ST_REPO_VANILLA"    "$SUCKLESS_DIR/st"
-    clone_or_pull "$DMENU_REPO_VANILLA" "$SUCKLESS_DIR/dmenu"
-    clone_or_pull "$SLOCK_REPO_VANILLA" "$SUCKLESS_DIR/slock"
+    clone_or_pull "$DWM_REPO_VANILLA"      "$SUCKLESS_DIR/dwm"
+    clone_or_pull "$ST_REPO_VANILLA"       "$SUCKLESS_DIR/st"
+    clone_or_pull "$DMENU_REPO_VANILLA"    "$SUCKLESS_DIR/dmenu"
+    clone_or_pull "$SLOCK_REPO_VANILLA"    "$SUCKLESS_DIR/slock"
     clone_or_pull "$SLSTATUS_REPO_VANILLA" "$SUCKLESS_DIR/slstatus"
     ;;
   nirucon)
@@ -181,24 +182,17 @@ endcase
 # ───────── Build & install ─────────
 for comp in "${COMPONENTS[@]}"; do
   case "$SOURCE_MODE" in
-    vanilla)
+    vanilla|nirucon)
       if [[ -d "$SUCKLESS_DIR/$comp" ]]; then
         make_install "$SUCKLESS_DIR/$comp" "$comp"
       else
         warn "$comp not found under $SUCKLESS_DIR — skipping"
       fi
       ;;
-    nirucon)
-      if [[ -d "$SUCKLESS_DIR/$comp" ]]; then
-        make_install "$SUCKLESS_DIR/$comp" "$comp"
-      else
-        warn "$comp not found in NIRUCON repo — skipping"
-      fi
-      ;;
   esac
 done
 
-# ───────── .xinitrc wiring (no duplicates) ─────────
+# ───────── .xinitrc wiring (idempotent, includes your hooks) ─────────
 if [[ $MANAGE_XINIT -eq 1 ]]; then
   step "Wiring ~/.xinitrc (safe, minimal)"
   if [[ ! -f "$XINIT" ]]; then
@@ -229,7 +223,7 @@ fi
 
 # Start compositor if available (config handled by install_lookandfeel.sh)
 if command -v picom >/dev/null; then
-  picom &
+  picom --experimental-backends &
 fi
 
 # Start status bar if installed (installed by install_statusbar.sh)
@@ -243,9 +237,9 @@ fi
 # Cleanup children on exit
 trap 'kill -- -$$' EXIT
 
-# Auto-restart dwm and log
+# Auto-restart dwm and log; robust path resolution
 while true; do
-  /usr/local/bin/dwm 2> /tmp/dwm.log
+  "$(command -v dwm || echo /usr/local/bin/dwm)" 2> /tmp/dwm.log
 done
 EOF
     chmod 644 "$XINIT"
@@ -257,7 +251,7 @@ EOF
     append_once '[ -x "$HOME/.local/bin/wallrotate.sh" ] && "$HOME/.local/bin/wallrotate.sh" &' "$XINIT"
     append_once 'command -v nextcloud >/dev/null && nextcloud --background &' "$XINIT"
     append_once 'if command -v xautolock >/dev/null && command -v slock >/dev/null; then xautolock -time 10 -locker slock & fi' "$XINIT"
-    append_once 'while true; do /usr/local/bin/dwm 2> /tmp/dwm.log; done' "$XINIT"
+    append_once 'while true; do "$(command -v dwm || echo /usr/local/bin/dwm)" 2> /tmp/dwm.log; done' "$XINIT"
   fi
 else
   warn "--no-xinit set: leaving ~/.xinitrc untouched"
@@ -269,13 +263,13 @@ cat <<'EOT'
 Suckless install finished
 
 • Components built: dwm/st/dmenu/slock/slstatus (customize with --only)
-• Picom.conf was not modified (managed by install_lookandfeel.sh)
-• Status bar hook present; run install_statusbar.sh to install bar scripts
+• picom.conf was not modified (managed by install_lookandfeel.sh)
+• Status bar hook present; run install_statusbar.sh to install bar script
 • Start X with:  startx
 
 Tips:
 • Choose source with --source vanilla|nirucon (non-interactive, ALPI-friendly)
-• Use --no-fonts to skip font checks (if handled by install_lookandfeel.sh)
+• Use --no-fonts to skip font checks (if handled elsewhere)
 • Override PREFIX with --prefix if you prefer /usr
 ========================================================
 EOT
