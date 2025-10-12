@@ -280,7 +280,7 @@ nc_status() {
     if supports_icons; then printf " online"; else printf "S: online"; fi
   else
     # Client running but status unknown -> treat as online (conservative)
-    if supports_icons; then printf " online"; else printf "S: online"; fi
+    if supports_icons; then printf " idle"; else printf "S: online"; fi
   fi
 }
 
