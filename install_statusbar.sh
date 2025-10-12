@@ -95,28 +95,50 @@ if [[ $DRY_RUN -eq 1 ]]; then
 else
   install -Dm755 /dev/stdin "$LOCAL_BIN/dwm-status.sh" <<'EOF'
 #!/usr/bin/env bash
-# DWM status: [ 🔋/ | /disconnected | YYYY-MM-DD (w:WW) | HH:MM ]
+# DWM status:
+# Icons first (if a Nerd Font is available), otherwise fall back to compact text.
+# Icon example: [  87% |  my-ssid |  online | 2025-10-12 w:41 | 09:05 ]
+# Text example:  [ B: 87% | N: my-ssid | S: online | 2025-10-12 w:41 | 09:05 ]
+#
 # by Nicklas Rudolfsson https://github.com/nirucon
 #
-# Purpose:
-#   Lightweight, dependency-minimal status line for dwm via xsetroot.
-#   Uses Nerd Font icons when available; falls back to ASCII text otherwise.
-#
-# Environment:
-#   DWM_STATUS_ICONS=0|1       # default 1; set 0 to force ASCII-only
-#   DWM_STATUS_INTERVAL=seconds # default 10; update interval
+# Env:
+#   DWM_STATUS_ICONS=0|1         # default 1; set 0 to force text-only
+#   DWM_STATUS_ASSUME_ICONS=0|1  # optional hard override to force icon mode (default 0)
+#   DWM_STATUS_INTERVAL=seconds  # default 10
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# Ensure common tools are available in non-interactive autostarts
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
 supports_icons() {
-  # Detect a Symbols Nerd Font and whether icons are allowed
-  fc-list | grep -qi "Symbols Nerd Font" || return 1
-  [ "${DWM_STATUS_ICONS:-1}" = "1" ]
+  # Respect explicit opt-out first
+  [ "${DWM_STATUS_ICONS:-1}" = "1" ] || return 1
+
+  # Manual override if your login environment is quirky
+  [ "${DWM_STATUS_ASSUME_ICONS:-0}" = "1" ] && return 0
+
+  # Try fc-list
+  if command -v fc-list >/dev/null 2>&1; then
+    if fc-list | grep -qi 'Nerd Font'; then
+      return 0
+    fi
+  fi
+
+  # Fallback: fc-match -s
+  if command -v fc-match >/dev/null 2>&1; then
+    if fc-match -s | grep -qi 'Nerd Font'; then
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 battery() {
-  # Show battery percent and charging status if a battery is present
+  # Show battery if present (first BAT* only, quietly skip otherwise)
   shopt -s nullglob
   local bat_dirs=(/sys/class/power_supply/BAT*)
   shopt -u nullglob
@@ -124,130 +146,164 @@ battery() {
 
   local b="${bat_dirs[0]}"
   local cap stat
-  cap="$(cat "$b/capacity" 2>/dev/null || echo "")"
-  [ -n "$cap" ] || return 0
-  stat="$(cat "$b/status" 2>/dev/null || echo "")"
+  cap="$(cat "$b/capacity" 2>/dev/null || true)"
+  [ -n "${cap:-}" ] || return 0
+  stat="$(cat "$b/status" 2>/dev/null || true)"
 
   if supports_icons; then
     local icon=""
-    if   [ "$cap" -ge 90 ]; then icon=""
-    elif [ "$cap" -ge 70 ]; then icon=""
-    elif [ "$cap" -ge 50 ]; then icon=""
-    elif [ "$cap" -ge 30 ]; then icon=""
-    fi
-    if [ "$stat" = "Charging" ]; then
+    if [ "$cap" -ge 90 ]; then
+      icon=""
+    elif [ "$cap" -ge 70 ]; then
+      icon=""
+    elif [ "$cap" -ge 50 ]; then
+      icon=""
+    elif [ "$cap" -ge 30 ]; then icon=""; fi
+
+    if [ "$stat" = "Charging" ] || [ "$stat" = "Unknown" ]; then
       printf " %s %s%%" "$icon" "$cap"
     else
       printf "%s %s%%" "$icon" "$cap"
     fi
   else
-    if [ "$stat" = "Charging" ]; then
-      printf "BAT %s%% CHG" "$cap"
-    else
-      printf "BAT %s%%" "$cap"
-    fi
+    printf "B: %s%%" "$cap"
   fi
 }
 
-wifi() {
-  # Show SSID if connected via Wi-Fi; otherwise show disconnected
-  shopt -s nullglob
-  local wl_ifaces=(/sys/class/net/wl*)
-  shopt -u nullglob
-  [ ${#wl_ifaces[@]} -gt 0 ] || return 0
-
+wifi_ssid() {
+  # Return SSID if connected via Wi-Fi, else empty
   local ssid=""
   if command -v iwgetid >/dev/null 2>&1; then
     ssid="$(iwgetid -r 2>/dev/null || true)"
   fi
   if [ -z "$ssid" ] && command -v nmcli >/dev/null 2>&1; then
-    ssid="$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev status 2>/dev/null \
-      | awk -F: '$2=="wifi" && $3=="connected"{print $4; exit}')"
+    ssid="$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev status 2>/dev/null |
+      awk -F: '$2=="wifi" && $3=="connected"{print $4; exit}')"
+  fi
+  printf "%s" "$ssid"
+}
+
+wired_state() {
+  # Prefer en*; fall back to eth*. Return operstate (up/down/unknown)
+  shopt -s nullglob
+  local ifs=(/sys/class/net/en* /sys/class/net/eth*)
+  shopt -u nullglob
+  local i
+  for i in "${ifs[@]}"; do
+    [ -d "$i" ] || continue
+    local name="${i##*/}"
+    [ "$name" = "lo" ] && continue
+    if [ -f "$i/operstate" ]; then
+      cat "$i/operstate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+network() {
+  # 1) Wi-Fi SSID if connected
+  local ssid
+  ssid="$(wifi_ssid)"
+  if [ -n "$ssid" ]; then
+    if supports_icons; then
+      printf " %s" "$ssid"
+    else
+      printf "N: %s" "$ssid"
+    fi
+    return 0
   fi
 
-  if [ -n "$ssid" ]; then
-    if supports_icons; then printf " %s" "$ssid"; else printf "WIFI %s" "$ssid"; fi
+  # 2) Wired operstate if present
+  local wstate=""
+  wstate="$(wired_state 2>/dev/null || true)"
+  if [ -n "$wstate" ]; then
+    if supports_icons; then
+      printf " %s" "$wstate"
+    else
+      printf "N: %s" "$wstate"
+    fi
+    return 0
+  fi
+
+  # 3) Otherwise offline
+  if supports_icons; then
+    printf " off"
   else
-    if supports_icons; then printf "󰤭 disconnected"; else printf "WIFI disconnected"; fi
+    printf "N: offline"
   fi
 }
 
-# --- Nextcloud status (no tray needed) ---
+# --- Nextcloud status (icon-first, text fallback) ---
 nc_status() {
-  # Don't show anything if client is not installed
+  # If client isn't installed, don't show anything
   command -v nextcloud >/dev/null 2>&1 || return 0
 
-  # If process not running -> OFF
-  pgrep -x nextcloud >/dev/null 2>&1 || {
-    if supports_icons; then printf " off"; else printf "NC off"; fi
+  # If process not running -> offline
+  if ! pgrep -x nextcloud >/dev/null 2>&1; then
+    if supports_icons; then printf " offline"; else printf "S: offline"; fi
     return 0
-  }
+  fi
 
-  # Try CloudProviders via D-Bus (Nextcloud desktop client exposes com.nextcloudgmbh.Nextcloud)
+  local any_sync=0 any_online=0
   if command -v gdbus >/dev/null 2>&1; then
-    local objs; objs="$(gdbus call --session \
+    local objs
+    objs="$(gdbus call --session \
       --dest com.nextcloudgmbh.Nextcloud \
       --object-path /com/nextcloudgmbh/Nextcloud \
       --method org.freedesktop.DBus.ObjectManager.GetManagedObjects 2>/dev/null)" || objs=""
-
-    # If query failed, just say RUN
-    if [ -z "$objs" ]; then
-      if supports_icons; then printf " run"; else printf "NC run"; fi
-      return 0
+    if [ -n "$objs" ]; then
+      while IFS= read -r path; do
+        local v up
+        for prop in Status State Connected; do
+          v="$(gdbus call --session \
+            --dest com.nextcloudgmbh.Nextcloud \
+            --object-path "$path" \
+            --method org.freedesktop.DBus.Properties.Get \
+            org.freedesktop.CloudProvider1 "$prop" 2>/dev/null || true)"
+          [ -n "$v" ] && break
+        done
+        [ -z "$v" ] && continue
+        up="$(printf "%s" "$v" | tr '[:lower:]' '[:upper:]')"
+        if printf "%s" "$up" | grep -Eq "SYNC|BUSY|RUN|WORK|PROGRESS"; then
+          any_sync=1
+        elif printf "%s" "$up" | grep -Eq "OK|IDLE|READY|TRUE|ONLINE|CONNECTED"; then
+          any_online=1
+        fi
+      done < <(printf "%s\n" "$objs" | sed -n "s/^\s*['\"]\([^'\"]\+\)['\"].*/\1/p")
     fi
-
-    # Parse object paths from the returned dict (bash-safe heuristic)
-    local any_sync=0 any_ok=0
-    while IFS= read -r path; do
-      # Probe a few common props on org.freedesktop.CloudProvider1
-      local val=""
-      for prop in Status State Connected; do
-        v="$(gdbus call --session \
-             --dest com.nextcloudgmbh.Nextcloud \
-             --object-path "$path" \
-             --method org.freedesktop.DBus.Properties.Get \
-             org.freedesktop.CloudProvider1 "$prop" 2>/dev/null || true)"
-        [ -n "$v" ] && { val="$v"; break; }
-      done
-      [ -z "$val" ] && continue
-
-      up="$(printf "%s" "$val" | tr '[:lower:]' '[:upper:]')"
-      if printf "%s" "$up" | grep -Eq "SYNC|BUSY|RUN|WORK|PROGRESS"; then
-        any_sync=1
-      elif printf "%s" "$up" | grep -Eq "OK|IDLE|READY|TRUE|ONLINE|CONNECTED"; then
-        any_ok=1
-      fi
-    done < <(printf "%s\n" "$objs" | sed -n "s/^\s*['\"]\([^'\"]\+\)['\"].*/\1/p")
-
-    if [ "$any_sync" -eq 1 ]; then
-      if supports_icons; then printf " sync"; else printf "NC sync"; fi
-    elif [ "$any_ok" -eq 1 ]; then
-      if supports_icons; then printf " ok"; else printf "NC ok"; fi
-    else
-      if supports_icons; then printf " run"; else printf "NC run"; fi
-    fi
-    return 0
   fi
 
-  # Fallback if no gdbus: we know it's running
-  if supports_icons; then printf " run"; else printf "NC run"; fi
+  if [ "$any_sync" -eq 1 ]; then
+    if supports_icons; then printf " syncing"; else printf "S: syncing"; fi
+  elif [ "$any_online" -eq 1 ]; then
+    if supports_icons; then printf " online"; else printf "S: online"; fi
+  else
+    # Client running but status unknown -> treat as online (conservative)
+    if supports_icons; then printf " online"; else printf "S: online"; fi
+  fi
 }
 
+date_part() { date +'%Y-%m-%d w:%V'; }
+time_part() { date +'%H:%M'; }
+
 build_line() {
-  # Compose the full status string from parts, with graceful omissions
   local parts=()
 
-  local b_str; b_str="$(battery 2>/dev/null || true)"; [ -n "${b_str:-}" ] && parts+=("$b_str")
-  local w_str; w_str="$(wifi 2>/dev/null || true)";    [ -n "${w_str:-}" ] && parts+=("$w_str")
-  local n_str; n_str="$(nc_status 2>/dev/null || true)"; [ -n "${n_str:-}" ] && parts+=("$n_str")
+  local b
+  b="$(battery 2>/dev/null || true)"
+  [ -n "$b" ] && parts+=("$b")
+  local n
+  n="$(network 2>/dev/null || true)"
+  [ -n "$n" ] && parts+=("$n")
+  local s
+  s="$(nc_status 2>/dev/null || true)"
+  [ -n "$s" ] && parts+=("$s")
 
-  local d t
-  d="$(date +'%Y-%m-%d (w:%V)')"
-  t="$(date +'%H:%M')"
   if supports_icons; then
-    parts+=(" $d" " $t")
+    parts+=(" $(date_part)" " $(time_part)")
   else
-    parts+=("DATE $d" "TIME $t")
+    parts+=("$(date_part)" "$(time_part)")
   fi
 
   local line="${parts[0]:-}"
