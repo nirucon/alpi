@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # install_apps.sh — application layer for Arch
-# Purpose: Install desktop apps & developer tools via pacman and (optionally) yay
+# Purpose: Install desktop apps & developer tools via pacman and (optionally) yay,
+#          without removing anything from your previous apps list.
 # Author:  Nicklas Rudolfsson (NIRUCON)
 
 set -Eeuo pipefail
@@ -30,6 +31,7 @@ install_apps.sh — options
   -h|--help     Show this help
 
 Design:
+• Keeps ALL apps from your previous script.
 • You can extend via apps-pacman.txt / apps-yay.txt (one package per line). Duplicates are removed.
 EOF
 }
@@ -44,9 +46,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else eval "$@"; fi }
+# ───────── Helpers ─────────
+# If passed one string → run through a shell (allows pipes/&&).
+# If passed multiple args → run as argv list (ideal for arrays: "${arr[@]}").
+run(){
+  if [[ $DRY_RUN -eq 1 ]]; then
+    say "[dry-run] $*"
+  else
+    if [[ $# -eq 1 ]]; then
+      bash -lc "$1"
+    else
+      "$@"
+    fi
+  fi
+}
 read_list(){ local f="$1"; [[ -f "$f" ]] || return 0; grep -vE '^\s*#' "$f" | awk 'NF' ; }
 unique(){ awk '!x[$0]++'; }
+
+append_once() {
+  # Append a line to a file only if it's not already present (exact match)
+  local line="$1" file="$2"
+  grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"
+}
 
 # ───────── Your original lists (UNCHANGED) ─────────
 PACMAN_PKGS_BASE=(
@@ -109,7 +130,7 @@ mapfile -t YAY_PKGS    < <(printf '%s\n' "${YAY_PKGS[@]}"    | unique)
 # ───────── Install pacman apps ─────────
 step "Installing pacman apps (${#PACMAN_PKGS[@]})"
 if (( ${#PACMAN_PKGS[@]} > 0 )); then
-  run "sudo pacman -S --needed --noconfirm ${PACMAN_PKGS[*]}"
+  run sudo pacman -S --needed --noconfirm "${PACMAN_PKGS[@]}"
 else
   say "No pacman apps to install"
 fi
@@ -119,13 +140,13 @@ if (( USE_YAY==1 )); then
   if ! command -v yay >/dev/null 2>&1; then
     step "Installing yay-bin (AUR helper)"
     tmp="$(mktemp -d)"
-    run "git clone https://aur.archlinux.org/yay-bin.git '$tmp/yay-bin'"
-    ( cd "$tmp/yay-bin" && run "makepkg -si --noconfirm" )
+    run git clone https://aur.archlinux.org/yay-bin.git "$tmp/yay-bin"
+    ( cd "$tmp/yay-bin" && run makepkg -si --noconfirm )
     rm -rf "$tmp"
   fi
   if (( ${#YAY_PKGS[@]} > 0 )); then
     step "Installing AUR apps via yay (${#YAY_PKGS[@]})"
-    run "yay -S --needed --noconfirm ${YAY_PKGS[*]}"
+    run yay -S --needed --noconfirm "${YAY_PKGS[@]}"
   else
     say "No AUR apps to install"
   fi
@@ -139,11 +160,11 @@ LAZY_STARTER_REPO="https://github.com/LazyVim/starter"
 if command -v nvim >/dev/null 2>&1; then
   if [[ ! -d "$NVIM_DIR" ]]; then
     step "Bootstrapping LazyVim"
-    run "git clone --depth=1 '$LAZY_STARTER_REPO' '$NVIM_DIR'"
-    ( cd "$NVIM_DIR" && run "rm -rf .git" )
-    say "LazyVim starter installed to $NVIM_DIR"
+    run git clone --depth=1 "$LAZY_STARTER_REPO" "$NVIM_DIR"
+    ( cd "$NVIM_DIR" && run rm -rf .git )
     # First-time plugin sync (non-fatal if it fails headless)
-    run "nvim --headless '+Lazy! sync' +qa || true"
+    run nvim --headless "+Lazy! sync" +qa || true
+    say "LazyVim starter installed to $NVIM_DIR"
   else
     say "Neovim config exists ($NVIM_DIR) — leaving as-is"
   fi
@@ -152,8 +173,7 @@ else
 fi
 
 # ───────── Ensure EDITOR vars and PATH (idempotent) ─────────
-append_once(){ local line="$1" file="$2"; grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"; }
-declare -r BASH_PROFILE="$HOME/.bash_profile"
+BASH_PROFILE="$HOME/.bash_profile"
 append_once 'export EDITOR=nvim' "$BASH_PROFILE"
 append_once 'export VISUAL=nvim' "$BASH_PROFILE"
 if ! printf '%s' "$PATH" | grep -q "$HOME/.local/bin"; then
@@ -164,6 +184,7 @@ cat <<'EOT'
 ========================================================
 Apps installation complete
 
+• All apps from your previous script are included by default
 • pacman apps installed with --needed (no duplicates)
 • AUR apps installed via yay (auto-installed if missing)
 • (Optional) LazyVim bootstrapped if no ~/.config/nvim exists
