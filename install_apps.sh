@@ -99,6 +99,7 @@ PACMAN_PKGS_BASE=(
   jq                 #
   fzf                #
   btop               # sysinfo
+  rofi               # launcher
 
   # Neovim + tooling (LazyVim deps)
   neovim
