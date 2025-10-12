@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 # install_suckless.sh — build & install the suckless stack (dwm, st, dmenu, slock, slstatus)
-# Purpose: Compile and install suckless programs with zero/own patches, wire a safe ~/.xinitrc,
+# Purpose: Compile and install suckless programs (vanilla or nirucon tree), wire a safe ~/.xinitrc,
 #          and (optionally) install minimal deps & fonts if missing.
 # Author:  Nicklas Rudolfsson (NIRUCON)
-# Output:  Clear, English-only status messages. Safe & idempotent where possible.
-# Notes:   • picom.conf is handled by install_lookandfeel.sh (not here)
-#          • status bar script is installed by install_statusbar.sh (we only ensure hooks)
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -19,9 +16,7 @@ fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
 trap 'fail "install_suckless.sh failed. See previous messages for details."' ERR
 
 # ───────── Safety ─────────
-if [ "${EUID:-$(id -u)}" -eq 0 ]; then
-  fail "Do not run as root. This script compiles in HOME and uses sudo only when needed."; exit 1
-fi
+[[ ${EUID:-$(id -u)} -ne 0 ]] || { fail "Do not run as root."; exit 1; }
 command -v sudo >/dev/null 2>&1 || warn "sudo not found — system install steps may be skipped."
 
 # ───────── Paths / Defaults ─────────
@@ -32,19 +27,19 @@ BUILD_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/suckless-build"
 PREFIX="/usr/local"
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
-# Repos (vanilla by default)
+# Upstream repos
 DWM_REPO_VANILLA="https://git.suckless.org/dwm"
 ST_REPO_VANILLA="https://git.suckless.org/st"
 DMENU_REPO_VANILLA="https://git.suckless.org/dmenu"
 SLOCK_REPO_VANILLA="https://git.suckless.org/slock"
 SLSTATUS_REPO_VANILLA="https://git.suckless.org/slstatus"
 
-# NIRUCON mono-repo (components as subdirs)
+# NIRUCON mono-repo (components are subdirs)
 NIRUCON_REPO="https://github.com/nirucon/suckless"
 
 SOURCE_MODE="vanilla"   # vanilla | nirucon
 MANAGE_XINIT=1
-INSTALL_FONTS=1         # can be disabled; only installs if fonts are missing
+INSTALL_FONTS=1         # only if missing
 DRY_RUN=0
 COMPONENTS=(dwm st dmenu slock slstatus)
 
@@ -65,21 +60,16 @@ install_suckless.sh — options
 EOF
 }
 
-# Defensive: fetch the next argument or fail clearly
-need_val(){ # $1 = opt name
-  if [[ $# -lt 2 || -z ${2:-} ]]; then
-    fail "Option $1 requires a value. See --help."
-  fi
-}
+need_val(){ local opt="$1" val="${2-}"; [[ -n "$val" ]] || fail "Option $opt requires a value. See --help."; }
 
 parse_components(){ IFS=',' read -r -a COMPONENTS <<<"$1"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --source)  need_val "$1" "${2:-}"; SOURCE_MODE="$2"; shift 2;;
-    --prefix)  need_val "$1" "${2:-}"; PREFIX="$2"; shift 2;;
-    --only)    need_val "$1" "${2:-}"; parse_components "$2"; shift 2;;
-    --jobs)    need_val "$1" "${2:-}"; JOBS="$2"; shift 2;;
+    --source)  need_val "$1" "${2-}"; SOURCE_MODE="$2"; shift 2;;
+    --prefix)  need_val "$1" "${2-}"; PREFIX="$2"; shift 2;;
+    --only)    need_val "$1" "${2-}"; parse_components "$2"; shift 2;;
+    --jobs)    need_val "$1" "${2-}"; JOBS="$2"; shift 2;;
     --no-xinit) MANAGE_XINIT=0; shift;;
     --no-fonts) INSTALL_FONTS=0; shift;;
     --dry-run)  DRY_RUN=1; shift;;
@@ -88,24 +78,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ───────── Helpers ─────────
+# ───────── Helpers (array-safe) ─────────
 ts(){ date +"%Y%m%d-%H%M%S"; }
 ensure_dir(){ mkdir -p "$1"; }
 append_once(){ local line="$1" file="$2"; grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"; }
-run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else eval "$@"; fi }
+run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else "$@"; fi; }
 backup_if_exists(){ local f="$1"; [[ -e "$f" ]] || return 0; local b="${f}.bak.$(ts)"; cp -a -- "$f" "$b"; warn "Backup: $f -> $b"; }
 
 pkg_install(){
-  # Best-effort deps for building & runtime
   local pkgs=(base-devel git make gcc pkgconf
               libx11 libxft libxinerama libxrandr libxext libxrender libxfixes
               freetype2 fontconfig
               xorg-xsetroot xorg-xinit)
   if command -v pacman >/dev/null 2>&1; then
     step "Installing build/runtime dependencies via pacman (if missing)"
-    run "sudo pacman -S --needed --noconfirm ${pkgs[*]} || true"
+    run sudo pacman -S --needed --noconfirm "${pkgs[@]}" || warn "pacman dependency install failed (continuing)"
   else
-    warn "pacman not found; ensure build dependencies are present manually."
+    warn "pacman not found; ensure build deps are present manually."
   fi
 }
 
@@ -113,49 +102,46 @@ fonts_install_if_missing(){
   [[ $INSTALL_FONTS -eq 1 ]] || { warn "--no-fonts set: skipping font checks/install"; return 0; }
   step "Checking for required fonts"
   local need_main=1 need_icon=1
-  if fc-list | grep -qi "${FONT_MAIN}"; then need_main=0; fi
-  if fc-list | grep -qi "${FONT_ICON}"; then need_icon=0; fi
-  if (( need_main==0 && need_icon==0 )); then say "Required fonts already installed"; return 0; fi
+  fc-list | grep -qi "${FONT_MAIN}"  && need_main=0 || true
+  fc-list | grep -qi "${FONT_ICON}"  && need_icon=0 || true
+  (( need_main==0 && need_icon==0 )) && { say "Required fonts already installed"; return 0; }
 
-  if command -v pacman >/dev/null 2>&1; then
-    if (( need_icon==1 )); then
-      say "Installing ${FONT_ICON} via pacman"
-      run "sudo pacman -S --needed --noconfirm ttf-nerd-fonts-symbols-mono || true"
-    fi
+  if (( need_icon==1 )) && command -v pacman >/dev/null 2>&1; then
+    say "Installing ${FONT_ICON} via pacman"
+    run sudo pacman -S --needed --noconfirm ttf-nerd-fonts-symbols-mono || true
   fi
   if (( need_main==1 )); then
     if ! command -v yay >/dev/null 2>&1; then
       step "Installing yay-bin (AUR helper) to fetch ${FONT_MAIN}"
       local tmp; tmp="$(mktemp -d)"
-      (cd "$tmp" && run "git clone https://aur.archlinux.org/yay-bin.git" && cd yay-bin && run "makepkg -si --noconfirm")
+      run git clone https://aur.archlinux.org/yay-bin.git "$tmp/yay-bin"
+      ( cd "$tmp/yay-bin" && run makepkg -si --noconfirm )
       rm -rf "$tmp"
     fi
     say "Installing ${FONT_MAIN} via yay"
-    run "yay --noconfirm --needed -S ttf-jetbrains-mono-nerd || true"
+    run yay --noconfirm --needed -S ttf-jetbrains-mono-nerd || true
   fi
 }
 
 clone_or_pull(){
-  # Clone if absent; otherwise fast-forward pull
+  # $1=url, $2=dir
   local url="$1" dir="$2"
   if [[ -d "$dir/.git" ]]; then
     step "Updating $(basename "$dir")"
-    (cd "$dir" && run "git fetch --all --prune" && run "git pull --ff-only") || warn "git update failed for $dir; keeping existing tree."
+    run git -C "$dir" fetch --all --prune || warn "git fetch failed for $dir"
+    run git -C "$dir" pull --ff-only || warn "git pull failed for $dir; keeping existing tree."
   else
     ensure_dir "$(dirname "$dir")"
     step "Cloning $(basename "$dir")"
-    run "git clone '$url' '$dir'"
+    run git clone "$url" "$dir"
   fi
 }
 
 make_install(){
   local dir="$1" name="$2"
   step "Building $name"
-  if [[ $DRY_RUN -eq 1 ]]; then
-    say "[dry-run] (cd '$dir' && make clean && make -j$JOBS && sudo make PREFIX='$PREFIX' install)"
-  else
-    (cd "$dir" && make clean && make -j"$JOBS" && sudo make PREFIX="$PREFIX" install)
-  fi
+  ( cd "$dir" && { [[ $DRY_RUN -eq 1 ]] && say "[dry-run] make -j$JOBS && sudo make PREFIX=$PREFIX install" \
+                || { make clean && make -j"$JOBS" && sudo make PREFIX="$PREFIX" install; }; } )
 }
 
 # ───────── Prepare dirs & deps ─────────
