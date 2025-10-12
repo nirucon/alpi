@@ -100,6 +100,7 @@ PACMAN_PKGS_BASE=(
   fzf                #
   btop               # sysinfo
   rofi               # launcher
+  brightnessctl      # screen
 
   # Neovim + tooling (LazyVim deps)
   neovim
