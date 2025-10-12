@@ -3,8 +3,6 @@
 # Purpose: Install a robust, dependency-light dwm status script to ~/.local/bin without
 #          touching other configs. Pairs cleanly with install_suckless.sh & install_lookandfeel.sh.
 # Author:  Nicklas Rudolfsson (NIRUCON)
-# Output:  Clear, English-only status messages. Safe & idempotent.
-# Notes:   By default, this script does NOT edit ~/.xinitrc. You can opt-in with --hook-xinit.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
