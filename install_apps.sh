@@ -95,6 +95,7 @@ PACMAN_PKGS_BASE=(
   papirus-icon-theme # pcmanfm styling
   gimp               #
   nextcloud-client   # sync stuff
+  localsend          # 
   mpv                #
   jq                 #
   fzf                #
