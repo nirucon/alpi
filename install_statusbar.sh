@@ -1,48 +1,102 @@
 #!/usr/bin/env bash
-# STATUSBAR – by Nicklas Rudolfsson https://github.com/nirucon
+# install_statusbar.sh — install dwm status bar launcher script only
+# Purpose: Install a robust, dependency-light dwm status script to ~/.local/bin without
+#          touching other configs. Pairs cleanly with install_suckless.sh & install_lookandfeel.sh.
+# Author:  Nicklas Rudolfsson (NIRUCON)
+# Output:  Clear, English-only status messages. Safe & idempotent.
+# Notes:   By default, this script does NOT edit ~/.xinitrc. You can opt-in with --hook-xinit.
 
-# Strict error handling for reliability
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# ---------- Pretty logging ----------
-say(){  printf "\033[1;36m[SBAR]\033[0m %s\n" "$*"; }
-fail(){ printf "\033[1;31m[SBAR]\033[0m %s\n" "$*" >&2; }
+# ───────── Pretty logging ─────────
+CYN="\033[1;36m"; YLW="\033[1;33m"; RED="\033[1;31m"; BLU="\033[1;34m"; GRN="\033[1;32m"; NC="\033[0m"
+say()  { printf "${CYN}[SBAR]${NC} %s\n" "$*"; }
+step() { printf "${BLU}==>${NC} %s\n" "$*"; }
+warn() { printf "${YLW}[WARN]${NC} %s\n" "$*"; }
+fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
+trap 'fail "install_statusbar.sh failed. See previous messages for details."' ERR
 
-# Fail with context if anything errors
-trap 'fail "install_statusbar.sh failed. See previous step for details."' ERR
-
-# ---------- Safety: refuse running as root ----------
-# Running as root would place files under /root and cause confusion.
+# ───────── Safety ─────────
 if [ "${EUID:-$(id -u)}" -eq 0 ]; then
-  fail "Do not run this script with sudo/root. Run it as your normal user."
-  # If you prefer to auto-target the invoking sudo user instead, you could replace the 'exit 1'
-  # above with dynamic HOME detection:
-  # if [ -n "${SUDO_USER:-}" ]; then
-  #   USER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
-  #   export HOME="$USER_HOME"
-  #   say "Running under sudo; targeting HOME=$HOME for file installation."
-  # else
-  #   exit 1
-  # fi
-  exit 1
+  fail "Do not run as root. Run as your normal user."; exit 1
 fi
 
+# ───────── Defaults / args ─────────
 LOCAL_BIN="$HOME/.local/bin"
 XINIT="$HOME/.xinitrc"
+HOOK_XINIT=0       # default: do NOT touch ~/.xinitrc
+ENSURE_PATH=1      # ensure ~/.local/bin in PATH via ~/.bash_profile
+INSTALL_DEPS=1     # best-effort install of minimal runtime deps
+DRY_RUN=0
 
-# Ensure ~/.local/bin exists
-mkdir -p "$LOCAL_BIN"
+usage(){ cat <<'EOF'
+install_statusbar.sh — options
+  --hook-xinit      Append a one-line launcher to ~/.xinitrc (idempotent)
+  --no-path         Do NOT modify ~/.bash_profile to add ~/.local/bin to PATH
+  --no-deps         Do NOT attempt to install runtime dependencies
+  --dry-run         Print actions without changing the system
+  -h|--help         Show this help
 
-# Ensure ~/.local/bin is on PATH for future shells (idempotent append)
-if ! printf '%s' "$PATH" | grep -q "$HOME/.local/bin"; then
-  say "Adding ~/.local/bin to PATH via ~/.bash_profile"
-  grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bash_profile" 2>/dev/null \
-    || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bash_profile"
+Design:
+• Installs only the bar script to ~/.local/bin/dwm-status.sh.
+• By default, does not edit ~/.xinitrc (kept in install_suckless.sh).
+• The generated bar script content is preserved EXACTLY as provided.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hook-xinit) HOOK_XINIT=1; shift;;
+    --no-path)    ENSURE_PATH=0; shift;;
+    --no-deps)    INSTALL_DEPS=0; shift;;
+    --dry-run)    DRY_RUN=1; shift;;
+    -h|--help)    usage; exit 0;;
+    *) warn "Unknown argument: $1"; usage; exit 1;;
+  esac
+done
+
+# ───────── Helpers ─────────
+run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else eval "$@"; fi }
+append_once(){ local line="$1" file="$2"; grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"; }
+ensure_dir(){ mkdir -p "$1"; }
+
+# ───────── Prepare dirs ─────────
+ensure_dir "$LOCAL_BIN"
+
+# ───────── Minimal runtime deps (best-effort) ─────────
+# We do NOT install heavy deps; just helpful tools if missing. Safe to skip with --no-deps.
+if (( INSTALL_DEPS == 1 )); then
+  if command -v pacman >/dev/null 2>&1; then
+    step "Ensuring minimal runtime tools exist (best-effort)"
+    run "sudo pacman -S --needed --noconfirm xorg-xsetroot inetutils grep sed awk coreutils fontconfig gawk"
+    # Wi-Fi helpers if available in repos
+    run "sudo pacman -S --needed --noconfirm iw networkmanager || true"
+    # DBus helper for Nextcloud status parsing
+    run "sudo pacman -S --needed --noconfirm gdbus || true" || true
+  else
+    warn "pacman not found; skipping dependency install"
+  fi
+else
+  warn "--no-deps set: skipping dependency checks"
 fi
 
-say "Writing dwm-status.sh (icons with ASCII fallback)…"
-install -Dm755 /dev/stdin "$LOCAL_BIN/dwm-status.sh" <<'EOF'
+# ───────── Ensure ~/.local/bin on PATH ─────────
+if (( ENSURE_PATH == 1 )); then
+  if ! printf '%s' "$PATH" | grep -q "$HOME/.local/bin"; then
+    step "Adding ~/.local/bin to PATH via ~/.bash_profile"
+    run "grep -qxF 'export PATH=\"$HOME/.local/bin:$PATH\"' '$HOME/.bash_profile' 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> '$HOME/.bash_profile'"
+  else
+    say "~/.local/bin already present in PATH"
+  fi
+fi
+
+# ───────── Install bar script (CONTENT UNCHANGED) ─────────
+step "Installing dwm-status.sh into $LOCAL_BIN"
+if [[ $DRY_RUN -eq 1 ]]; then
+  say "[dry-run] Would write $LOCAL_BIN/dwm-status.sh (755)"
+else
+  install -Dm755 /dev/stdin "$LOCAL_BIN/dwm-status.sh" <<'EOF'
 #!/usr/bin/env bash
 # DWM status: [ 🔋/ | /disconnected | YYYY-MM-DD (w:WW) | HH:MM ]
 # by Nicklas Rudolfsson https://github.com/nirucon
@@ -212,31 +266,21 @@ while :; do
   sleep "$INTERVAL"
 done
 EOF
-
-# Ensure .xinitrc launches the bar (append once, non-destructive)
-if [ ! -f "$XINIT" ]; then
-  say "Creating minimal ~/.xinitrc and enabling status bar…"
-  cat > "$XINIT" <<'EOF'
-#!/bin/sh
-# Minimal X init with Swedish layout and dwm status bar
-setxkbmap se
-command -v nitrogen >/dev/null && nitrogen --restore &
-command -v picom >/dev/null && picom --experimental-backends &
-~/.local/bin/dwm-status.sh &
-xsetroot -solid "#111111"
-exec dwm
-EOF
-  chmod 644 "$XINIT"
-elif ! grep -q 'dwm-status.sh' "$XINIT" 2>/dev/null; then
-  say "Adding status bar launch to ~/.xinitrc …"
-  {
-    echo ''
-    echo '# Status bar'
-    echo '~/.local/bin/dwm-status.sh &'
-  } >> "$XINIT"
-else
-  say "Status bar launch already present in ~/.xinitrc — leaving as-is."
 fi
 
-say "Status bar installed. (Tweak with DWM_STATUS_ICONS=0 and/or DWM_STATUS_INTERVAL=5)"
+# ───────── Optional: hook into ~/.xinitrc (idempotent) ─────────
+if (( HOOK_XINIT == 1 )); then
+  step "Appending dwm-status.sh launcher to ~/.xinitrc (idempotent)"
+  if [[ ! -f "$XINIT" ]]; then
+    warn "~/.xinitrc not found — not creating it (install_suckless.sh manages it)."
+  else
+    append_once '# Status bar (installed by install_statusbar.sh)' "$XINIT"
+    append_once '[ -x "$HOME/.local/bin/dwm-status.sh" ] && "$HOME/.local/bin/dwm-status.sh" &' "$XINIT"
+    say "Launcher hook ensured in $XINIT"
+  fi
+else
+  say "Not modifying ~/.xinitrc (default). Use --hook-xinit to append the launcher."
+fi
+
+say "Status bar installed. (Tweak at runtime with DWM_STATUS_ICONS=0 and/or DWM_STATUS_INTERVAL=5)"
 say "Verify: ls -la ~/.local/bin/dwm-status.sh"
