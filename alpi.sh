@@ -4,7 +4,7 @@
 # Author:  Nicklas Rudolfsson (NIRUCON)
 # Notes:
 #   • Run this script as a NORMAL USER (not root).
-#   • Steps that need root are invoked via sudo (kept alive during run).
+#   • Steps that need root either handle sudo internally (core/apps) or are invoked via sudo here (optimize).
 #   • Idempotent: safe to re-run.
 
 set -Eeuo pipefail
@@ -28,7 +28,7 @@ DRY_RUN=0
 STEPS=(core lookandfeel suckless statusbar apps optimize)
 
 SCK_SOURCE="vanilla"   # default non-interactive choice
-ASK_SUCKLESS=0         # when 1: let install_suckless.sh prompt (TTY only)
+ASK_SUCKLESS=0
 SCK_NO_FONTS=0
 CORE_NO_SNAPSHOTS=0
 CORE_NO_UPGRADE=0
@@ -56,7 +56,7 @@ alpi.sh — options
   -h|--help            Show this help
 
 Design:
-• Run as NORMAL USER. Root-only steps are executed via sudo (kept alive).
+• Run as NORMAL USER. Core/Apps handle sudo internally. Optimize is invoked via sudo.
 • Order: core → lookandfeel → suckless → statusbar → apps → optimize
 EOF
 }
@@ -66,7 +66,6 @@ contains(){ local n=$1; shift; for e; do [[ $e == "$n" ]] && return 0; done; ret
 
 # ───────── Execution helpers ─────────
 run_user(){
-  # Run a script/command as the current (non-root) user
   if [[ $DRY_RUN -eq 1 ]]; then
     printf "${CYN}[ALPI]${NC} [dry-run user] %q %s\n" "$1" "${*:2}"
   else
@@ -75,7 +74,6 @@ run_user(){
 }
 
 run_root(){
-  # Run a script/command with sudo; assumes sudo keepalive is active
   if [[ $DRY_RUN -eq 1 ]]; then
     printf "${CYN}[ALPI]${NC} [dry-run root] %q %s\n" "$1" "${*:2}"
   else
@@ -83,18 +81,13 @@ run_root(){
   fi
 }
 
-# Ask for sudo once and keep it alive in background (only if we will need it)
-needs_root_step(){ contains core "${STEPS[@]}" || true; }
-
-if needs_root_step || contains apps "${STEPS[@]}" || contains optimize "${STEPS[@]}"; then
-  step "Validating sudo and starting keepalive"
-  sudo -v || fail "Need sudo privileges."
-  # Keep sudo timestamp fresh during long builds
-  ( while true; do sleep 60; sudo -n true 2>/dev/null || exit; done ) & SUDO_KEEPALIVE=$!
-  cleanup_keepalive(){ kill "$SUDO_KEEPALIVE" 2>/dev/null || true; }
-  trap 'cleanup_keepalive; fail "alpi.sh failed. See previous messages for details."' ERR
-  trap 'cleanup_keepalive' EXIT
-fi
+# Ask for sudo once and keep it alive (used by optimize here, and by core/apps internally)
+step "Validating sudo and starting keepalive"
+sudo -v || fail "Need sudo privileges."
+( while true; do sleep 60; sudo -n true 2>/dev/null || exit; done ) & SUDO_KEEPALIVE=$!
+cleanup_keepalive(){ kill "$SUDO_KEEPALIVE" 2>/dev/null || true; }
+trap 'cleanup_keepalive; fail "alpi.sh failed. See previous messages for details."' ERR
+trap 'cleanup_keepalive' EXIT
 
 # ───────── Resolve scripts ─────────
 LOOK="$SCRIPT_DIR/install_lookandfeel.sh"
@@ -106,7 +99,7 @@ OPTI="$SCRIPT_DIR/install_optimize.sh"
 for f in "$LOOK" "$SUCK" "$SBAR" "$CORE" "$APPS" "$OPTI"; do
   [[ -f "$f" ]] || fail "Missing script: $f"
   chmod +x "$f" || true
-done
+endone
 
 say "Starting ALPI orchestration"
 
@@ -117,12 +110,12 @@ for stepname in "${STEPS[@]}"; do
 
   case "$stepname" in
     core)
-      step "[1/6] Core setup (requires root)"
+      step "[1/6] Core setup (runs as user; uses sudo internally)"
       args=()
       (( CORE_NO_SNAPSHOTS==1 )) && args+=(--no-snapshots)
       (( CORE_NO_UPGRADE==1 ))   && args+=(--no-upgrade)
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run_root "$CORE" "${args[@]}"
+      run_user "$CORE" "${args[@]}"
       ;;
 
     lookandfeel)
@@ -133,7 +126,7 @@ for stepname in "${STEPS[@]}"; do
       ;;
 
     suckless)
-      step "[3/6] Suckless stack (dwm, st, dmenu, slock, slstatus or custom statusbar)"
+      step "[3/6] Suckless stack (dwm, st, dmenu, slock...) — build as user"
       args=(--jobs "$JOBS")
       (( SCK_NO_FONTS==1 )) && args+=(--no-fonts)
       (( DRY_RUN==1 )) && args+=(--dry-run)
@@ -151,17 +144,17 @@ for stepname in "${STEPS[@]}"; do
       ;;
 
     apps)
-      step "[5/6] Applications (requires root for system packages; AUR builds as user inside script)"
+      step "[5/6] Applications (runs as user; uses sudo/pacman internally; yay builds as user)"
       args=()
       (( APPS_NO_YAY==1 ))   && args+=(--no-yay)
       (( APPS_NO_FILES==1 )) && args+=(--no-files)
       (( DRY_RUN==1 )) && args+=(--dry-run)
-      run_root "$APPS" "${args[@]}"
+      run_user "$APPS" "${args[@]}"
       ;;
 
     optimize)
       if (( OPTI_DISABLE==1 )); then warn "Skipping optimize by policy"; continue; fi
-      step "[6/6] Optimize (zram, journald, /tmp tmpfs, sysctl, pacman.conf) — requires root"
+      step "[6/6] Optimize (root-only tweaks) — invoked via sudo"
       args=()
       (( DRY_RUN==1 )) && args+=(--dry-run)
       run_root "$OPTI" "${args[@]}"
@@ -181,7 +174,7 @@ ALPI complete
 
 Order executed: core → lookandfeel → suckless → statusbar → apps → optimize
 • Run alpi.sh as a NORMAL USER.
-• Root-only steps are invoked via sudo (with keepalive).
+• Core/Apps run as user and call sudo inside; Optimize runs via sudo here.
 • Safe to re-run; scripts use backups and idempotent operations.
 • Choose Vanilla vs Custom Suckless:
     ./alpi.sh --ask-suckless
