@@ -33,7 +33,6 @@ install_core.sh — options
 
 Design:
 • Installs base developer CLI, network, Xorg, audio, micro-utilities.
-• Optional pre-transaction snapshots via timeshift-autosnap.
 EOF
 }
 
@@ -62,16 +61,12 @@ run() {
   fi
 }
 
-# ───────── Timeshift + autosnap (optional) ─────────
+# ───────── Timeshift ─────────
 if (( ENABLE_SNAPSHOTS==1 )); then
-  step "Installing timeshift + autosnap (best-effort)"
+  step "Installing timeshift"
   run sudo pacman -S --needed --noconfirm timeshift
-  # autosnap from AUR (yay) if available
-  if command -v yay >/dev/null 2>&1; then
-    run "yay -S --needed --noconfirm timeshift-autosnap"
-  else
-    warn "yay not found — skipping timeshift-autosnap"
-  fi
+else
+  warn "--no-snapshots set: skipping timeshift"
 fi
 
 # ───────── System upgrade (optional) ─────────
