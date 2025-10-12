@@ -1,184 +1,278 @@
 #!/usr/bin/env bash
-# alpi.sh — Arch post-install orchestrator
-# Purpose: Run all install scripts in the correct order with clear output and safe defaults.
-# Author:  Nicklas Rudolfsson (NIRUCON)
-# Notes:
-#   • Run this script as a NORMAL USER (not root).
-#   • Core/Apps run as user (they use sudo inside). Optimize runs via sudo here.
-#   • Idempotent: safe to re-run.
+# alpi.sh — Arch Linux Post Install Orchestrator
+# Version: 2025-10-12
+# Author: You
+#
+# This orchestrates your post-install steps:
+#   core, apps, suckless, statusbar, lookandfeel, optimize
+#
+# Key guarantees:
+# - `--nirucon` sets SCK_SOURCE=nirucon and forwards `--source nirucon` to install_suckless.sh
+# - If `--ask-suckless` is used, no `--source` is sent (install_suckless.sh will prompt)
+# - `--only`/`--skip` to control steps; `--dry-run` prints commands only
+# - Clear, English-only logs and help text
 
 set -Eeuo pipefail
-IFS=$'\n\t'
 
-# ───────── Pretty logging ─────────
-GRN="\033[1;32m"; CYN="\033[1;36m"; YLW="\033[1;33m"; RED="\033[1;31m"; BLU="\033[1;34m"; NC="\033[0m"
-say()  { printf "${GRN}[ALPI]${NC} %s\n" "$*"; }
-step() { printf "${BLU}==>${NC} %s\n" "$*"; }
-warn() { printf "${YLW}[WARN]${NC} %s\n" "$*"; }
-fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; exit 1; }
-trap 'fail "alpi.sh failed. See previous messages for details."' ERR
+#######################################
+# Pretty logging
+#######################################
+COLOR_RESET="\033[0m"
+COLOR_INFO="\033[1;34m"
+COLOR_OK="\033[1;32m"
+COLOR_WARN="\033[1;33m"
+COLOR_ERR="\033[1;31m"
 
-# ───────── Safety ─────────
-[[ ${EUID:-$(id -u)} -ne 0 ]] || fail "Do NOT run alpi.sh as root. Start it as your normal user."
-command -v pacman >/dev/null 2>&1 || fail "This orchestrator targets Arch (pacman not found)."
-command -v sudo   >/dev/null 2>&1 || fail "sudo is required."
+say()  { printf "${COLOR_INFO}[*]${COLOR_RESET} %s\n" "$*"; }
+ok()   { printf "${COLOR_OK}[ok]${COLOR_RESET} %s\n" "$*"; }
+warn() { printf "${COLOR_WARN}[!]${COLOR_RESET} %s\n" "$*"; }
+err()  { printf "${COLOR_ERR}[x]${COLOR_RESET} %s\n" "$*" >&2; }
+die()  { err "$@"; exit 1; }
 
-# ───────── Defaults ─────────
+trap 'err "Aborted on line $LINENO (command: ${BASH_COMMAND:-unknown})"; exit 1' ERR
+
+#######################################
+# Paths & components
+#######################################
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+CORE="${SCRIPT_DIR}/install_core.sh"
+APPS="${SCRIPT_DIR}/install_apps.sh"
+SUCK="${SCRIPT_DIR}/install_suckless.sh"
+STAT="${SCRIPT_DIR}/install_statusbar.sh"
+LOOK="${SCRIPT_DIR}/install_lookandfeel.sh"
+OPTM="${SCRIPT_DIR}/install_optimize.sh"
+
+# Default execution order
+ALL_STEPS=(core apps suckless statusbar lookandfeel optimize)
+
+#######################################
+# Defaults (overridable by flags)
+#######################################
+JOBS="$(command -v nproc &>/dev/null && nproc || echo 2)"
 DRY_RUN=0
-STEPS=(core lookandfeel suckless statusbar apps optimize)
 
-SCK_SOURCE="vanilla"   # default non-interactive choice
-ASK_SUCKLESS=0
+# Suckless controls
+SCK_SOURCE="vanilla"    # "vanilla" | "nirucon"
+ASK_SUCKLESS=0          # 1 = let install_suckless.sh prompt (omit --source)
 SCK_NO_FONTS=0
-CORE_NO_SNAPSHOTS=0
-CORE_NO_UPGRADE=0
-APPS_NO_YAY=0
-APPS_NO_FILES=0
-OPTI_DISABLE=0
-JOBS="$(nproc 2>/dev/null || echo 2)"
 
-SCRIPT_DIR="${SCRIPT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
-PATH="$HOME/.local/bin:$PATH"
+# Selection filters
+ONLY_STEPS=()           # empty => run ALL_STEPS
+SKIP_STEPS=()
 
-usage(){ cat <<'EOF'
-alpi.sh — options
-  --only list          Comma-separated subset (core,lookandfeel,suckless,statusbar,apps,optimize)
-  --skip list          Comma-separated steps to skip
-  --nirucon            Build suckless from github.com/nirucon/suckless (non-interactive)
-  --ask-suckless       Ask interactively (TTY) Vanilla vs Custom when running suckless step
-  --no-fonts           Do not install fonts in install_suckless.sh
-  --no-snapshots       Do not set up timeshift/autosnap in install_core.sh
-  --no-upgrade         Skip pacman -Syu in install_core.sh
-  --no-yay             Do not install yay or any AUR apps in install_apps.sh
-  --no-files           Ignore apps-pacman.txt and apps-yay.txt in install_apps.sh
-  --jobs N             Parallel make jobs for suckless builds (default: nproc)
-  --dry-run            Print actions without changing the system
-  -h|--help            Show this help
+#######################################
+# Helpers
+#######################################
+exists() { [[ -e "$1" ]]; }
+is_exec() { [[ -x "$1" ]]; }
+ensure_exec() {
+  local f="$1"
+  exists "$f" || die "Missing script: $f"
+  if ! is_exec "$f"; then
+    warn "Script not executable: $f — attempting chmod +x"
+    chmod +x "$f" || die "Failed to chmod +x $f"
+  fi
+}
 
-Design:
-• Run as NORMAL USER. Core/Apps handle sudo internally. Optimize is invoked via sudo.
-• Order: core → lookandfeel → suckless → statusbar → apps → optimize
+in_array() {
+  local needle="$1"; shift
+  local x
+  for x in "$@"; do [[ "$x" == "$needle" ]] && return 0; done
+  return 1
+}
+
+should_run() {
+  local step="$1"
+  if ((${#ONLY_STEPS[@]} > 0)); then
+    in_array "$step" "${ONLY_STEPS[@]}" || return 0 && return 1
+  fi
+  in_array "$step" "${SKIP_STEPS[@]}" && return 1
+  return 0
+}
+
+run_user() {
+  local cmd=("$@")
+  say "RUN: ${cmd[*]}"
+  if (( DRY_RUN == 1 )); then
+    ok "Dry-run: command not executed."
+  else
+    "${cmd[@]}"
+    ok "Done: ${cmd[0]}"
+  fi
+}
+
+#######################################
+# Usage
+#######################################
+usage() {
+  cat <<'EOF'
+alpi.sh — Orchestrate post-install steps
+
+USAGE:
+  ./alpi.sh [flags]
+
+COMMON FLAGS:
+  --nirucon              Use your nirucon/suckless repo for suckless (forwards --source nirucon)
+  --vanilla              Force vanilla suckless (forwards --source vanilla)
+  --ask-suckless         Let install_suckless.sh prompt (will NOT send --source)
+  --no-fonts             Forward --no-fonts to install_suckless.sh
+
+  --jobs N               Parallel jobs (default: nproc)
+  --dry-run              Print what would run without executing
+
+  --only <list>          Run only these steps (comma-separated or repeat the flag)
+  --skip <list>          Skip these steps (comma-separated or repeat the flag)
+
+  --help                 Show this help
+
+STEPS (for --only/--skip):
+  core, apps, suckless, statusbar, lookandfeel, optimize
+
+EXAMPLES:
+  # Full run with nirucon suckless:
+  ./alpi.sh --nirucon
+
+  # Suckless + statusbar only, dry run:
+  ./alpi.sh --only suckless,statusbar --nirucon --dry-run
+
+  # Run everything but skip apps:
+  ./alpi.sh --skip apps --nirucon
 EOF
 }
 
-parse_csv(){ local IFS=","; read -r -a _arr <<<"$1"; printf '%s\n' "${_arr[@]}"; }
-contains(){ local n=$1; shift; for e; do [[ $e == "$n" ]] && return 0; done; return 1; }
+#######################################
+# Parse args
+#######################################
+if (( $# == 0 )); then
+  say "No flags provided. Running default flow (vanilla suckless)."
+fi
 
-# ───────── Execution helpers ─────────
-run_user(){
-  if [[ $DRY_RUN -eq 1 ]]; then
-    printf "${CYN}[ALPI]${NC} [dry-run user] %q %s\n" "$1" "${*:2}"
-  else
-    "$@"
-  fi
-}
-
-run_root(){
-  if [[ $DRY_RUN -eq 1 ]]; then
-    printf "${CYN}[ALPI]${NC} [dry-run root] %q %s\n" "$1" "${*:2}"
-  else
-    sudo -n -- "$@"
-  fi
-}
-
-# Ask for sudo once and keep it alive (used by optimize here, and by core/apps internally)
-step "Validating sudo and starting keepalive"
-sudo -v || fail "Need sudo privileges."
-( while true; do sleep 60; sudo -n true 2>/dev/null || exit; done ) & SUDO_KEEPALIVE=$!
-cleanup_keepalive(){ kill "$SUDO_KEEPALIVE" 2>/dev/null || true; }
-trap 'cleanup_keepalive; fail "alpi.sh failed. See previous messages for details."' ERR
-trap 'cleanup_keepalive' EXIT
-
-# ───────── Resolve scripts ─────────
-LOOK="$SCRIPT_DIR/install_lookandfeel.sh"
-SUCK="$SCRIPT_DIR/install_suckless.sh"
-SBAR="$SCRIPT_DIR/install_statusbar.sh"
-CORE="$SCRIPT_DIR/install_core.sh"
-APPS="$SCRIPT_DIR/install_apps.sh"
-OPTI="$SCRIPT_DIR/install_optimize.sh"
-for f in "$LOOK" "$SUCK" "$SBAR" "$CORE" "$APPS" "$OPTI"; do
-  [[ -f "$f" ]] || fail "Missing script: $f"
-  chmod +x "$f" || true
-done
-
-say "Starting ALPI orchestration"
-
-for stepname in "${STEPS[@]}"; do
-  if [[ -n "${SKIP_STEPS:-}" ]] && contains "$stepname" "${SKIP_STEPS[@]}"; then
-    warn "Skipping step: $stepname"; continue
-  fi
-
-  case "$stepname" in
-    core)
-      step "[1/6] Core setup (runs as user; uses sudo internally)"
-      args=()
-      (( CORE_NO_SNAPSHOTS==1 )) && args+=(--no-snapshots)
-      (( CORE_NO_UPGRADE==1 ))   && args+=(--no-upgrade)
-      (( DRY_RUN==1 )) && args+=(--dry-run)
-      run_user "$CORE" "${args[@]}"
-      ;;
-
-    lookandfeel)
-      step "[2/6] Look & Feel (user space: dotfiles, config)"
-      args=()
-      (( DRY_RUN==1 )) && args+=(--dry-run)
-      run_user "$LOOK" "${args[@]}"
-      ;;
-
-    suckless)
-      step "[3/6] Suckless stack (dwm, st, dmenu, slock...) — build as user"
-      args=(--jobs "$JOBS")
-      (( SCK_NO_FONTS==1 )) && args+=(--no-fonts)
-      (( DRY_RUN==1 )) && args+=(--dry-run)
-      if (( ASK_SUCKLESS==0 )); then
-        args+=(--source "$SCK_SOURCE")
-      fi
-      run_user "$SUCK" "${args[@]}"
-      ;;
-
-    statusbar)
-      step "[4/6] Status bar (user space)"
-      args=()
-      (( DRY_RUN==1 )) && args+=(--dry-run)
-      run_user "$SBAR" "${args[@]}"
-      ;;
-
-    apps)
-      step "[5/6] Applications (runs as user; uses sudo/pacman internally; yay builds as user)"
-      args=()
-      (( APPS_NO_YAY==1 ))   && args+=(--no-yay)
-      (( APPS_NO_FILES==1 )) && args+=(--no-files)
-      (( DRY_RUN==1 )) && args+=(--dry-run)
-      run_user "$APPS" "${args[@]}"
-      ;;
-
-    optimize)
-      if (( OPTI_DISABLE==1 )); then warn "Skipping optimize by policy"; continue; fi
-      step "[6/6] Optimize (root-only tweaks) — invoked via sudo"
-      args=()
-      (( DRY_RUN==1 )) && args+=(--dry-run)
-      run_root "$OPTI" "${args[@]}"
-      ;;
-
+while (( $# )); do
+  case "$1" in
+    --nirucon)
+      SCK_SOURCE="nirucon"; shift ;;
+    --vanilla)
+      SCK_SOURCE="vanilla"; shift ;;
+    --ask-suckless)
+      ASK_SUCKLESS=1; shift ;;
+    --no-fonts)
+      SCK_NO_FONTS=1; shift ;;
+    --jobs)
+      shift
+      [[ $# -gt 0 ]] || die "--jobs requires a value"
+      [[ "$1" =~ ^[0-9]+$ ]] || die "--jobs must be an integer"
+      JOBS="$1"; shift ;;
+    --dry-run)
+      DRY_RUN=1; shift ;;
+    --only)
+      shift
+      [[ $# -gt 0 ]] || die "--only requires a comma-separated list or repeat the flag"
+      IFS=',' read -r -a tmp <<< "$1"
+      ONLY_STEPS+=("${tmp[@]}"); shift ;;
+    --skip)
+      shift
+      [[ $# -gt 0 ]] || die "--skip requires a comma-separated list or repeat the flag"
+      IFS=',' read -r -a tmp <<< "$1"
+      SKIP_STEPS+=("${tmp[@]}"); shift ;;
+    --help|-h)
+      usage; exit 0 ;;
     *)
-      warn "Unknown step: $stepname (skipping)"
+      die "Unknown flag: $1 (see --help)"
       ;;
   esac
-
-  say "Completed step: $stepname"
 done
 
-cat <<'EOT'
-========================================================
-ALPI complete
+#######################################
+# Preflight
+#######################################
+say "Starting alpi.sh"
+say "Jobs:            $JOBS"
+say "Dry-run:         $DRY_RUN"
+say "Suckless source: $SCK_SOURCE (ask-suckless=$ASK_SUCKLESS, no-fonts=$SCK_NO_FONTS)"
+((${#ONLY_STEPS[@]} > 0)) && say "Only steps:      ${ONLY_STEPS[*]}"
+((${#SKIP_STEPS[@]} > 0)) && say "Skip steps:      ${SKIP_STEPS[*]}"
 
-Order executed: core → lookandfeel → suckless → statusbar → apps → optimize
-• Run alpi.sh as a NORMAL USER.
-• Core/Apps run as user and call sudo inside; Optimize runs via sudo here.
-• Safe to re-run; scripts use backups and idempotent operations.
-• Choose Vanilla vs Custom Suckless:
-    ./alpi.sh --ask-suckless
-  or force custom non-interactively:
-    ./alpi.sh --nirucon
-========================================================
-EOT
+ensure_exec "$CORE"
+ensure_exec "$APPS"
+ensure_exec "$SUCK"
+ensure_exec "$STAT"
+ensure_exec "$LOOK"
+ensure_exec "$OPTM"
+
+#######################################
+# Step wrappers
+#######################################
+step_core() {
+  should_run core || { warn "Skipping core"; return 0; }
+  say "==> Step: core"
+  local args=(--jobs "$JOBS")
+  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  run_user "$CORE" "${args[@]}"
+}
+
+step_apps() {
+  should_run apps || { warn "Skipping apps"; return 0; }
+  say "==> Step: apps"
+  local args=(--jobs "$JOBS")
+  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  run_user "$APPS" "${args[@]}"
+}
+
+step_suckless() {
+  should_run suckless || { warn "Skipping suckless"; return 0; }
+  say "==> Step: suckless"
+  local args=(--jobs "$JOBS")
+  (( SCK_NO_FONTS == 1 )) && args+=(--no-fonts)
+  (( DRY_RUN == 1 )) && args+=(--dry-run)
+
+  # Critical: only send --source when NOT in ask mode
+  if (( ASK_SUCKLESS == 0 )); then
+    args+=(--source "$SCK_SOURCE")
+  else
+    warn "ask-suckless is active: not sending --source (install_suckless.sh will prompt)."
+  fi
+
+  say "Resolved suckless source: $SCK_SOURCE (ask=$ASK_SUCKLESS)"
+  run_user "$SUCK" "${args[@]}"
+}
+
+step_statusbar() {
+  should_run statusbar || { warn "Skipping statusbar"; return 0; }
+  say "==> Step: statusbar"
+  local args=(--jobs "$JOBS")
+  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  run_user "$STAT" "${args[@]}"
+}
+
+step_lookandfeel() {
+  should_run lookandfeel || { warn "Skipping lookandfeel"; return 0; }
+  say "==> Step: lookandfeel"
+  local args=(--jobs "$JOBS")
+  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  run_user "$LOOK" "${args[@]}"
+}
+
+step_optimize() {
+  should_run optimize || { warn "Skipping optimize"; return 0; }
+  say "==> Step: optimize"
+  local args=(--jobs "$JOBS")
+  (( DRY_RUN == 1 )) && args+=(--dry-run)
+  run_user "$OPTM" "${args[@]}"
+}
+
+#######################################
+# Execute according to order/filters
+#######################################
+for step in "${ALL_STEPS[@]}"; do
+  case "$step" in
+    core)        step_core ;;
+    apps)        step_apps ;;
+    suckless)    step_suckless ;;
+    statusbar)   step_statusbar ;;
+    lookandfeel) step_lookandfeel ;;
+    optimize)    step_optimize ;;
+    *) warn "Unknown step in ALL_STEPS: $step (skipping)";;
+  esac
+done
+
+ok "All selected steps completed. Reboot is recommended!"
