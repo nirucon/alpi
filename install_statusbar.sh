@@ -69,11 +69,11 @@ ensure_dir "$LOCAL_BIN"
 if (( INSTALL_DEPS == 1 )); then
   if command -v pacman >/dev/null 2>&1; then
     step "Ensuring minimal runtime tools exist (best-effort)"
-    run "sudo pacman -S --needed --noconfirm xorg-xsetroot inetutils grep sed awk coreutils fontconfig gawk"
+    run "sudo pacman -S --needed --noconfirm xorg-xsetroot inetutils grep sed coreutils fontconfig gawk"
     # Wi-Fi helpers if available in repos
     run "sudo pacman -S --needed --noconfirm iw networkmanager || true"
     # DBus helper for Nextcloud status parsing
-    run "sudo pacman -S --needed --noconfirm gdbus || true" || true
+    run "sudo pacman -S --needed --noconfirm glib2 || true" || true
   else
     warn "pacman not found; skipping dependency install"
   fi
