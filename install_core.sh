@@ -3,9 +3,6 @@
 # Purpose: Set up core system pieces (snapshots, base CLI, Xorg/graphics/audio/network essentials),
 #          with clear, English-only output and idempotent behavior.
 # Author:  Nicklas Rudolfsson (NIRUCON)
-# Notes:   • Does NOT touch ~/.xinitrc (that is handled in install_suckless.sh)
-#          • Does NOT install look & feel (handled in install_lookandfeel.sh)
-#          • Safe to run multiple times; uses --needed and backups where applicable
 
 set -Eeuo pipefail
 IFS=$'\n\t'
