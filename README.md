@@ -1,2 +1,2 @@
 # alpi
-My Arch Linux Post Install with Suckless...
+Post install script(s) for Arch Linux with the Suckless stuff. Made for me after fresh vanilla Arch install.
