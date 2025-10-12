@@ -3,8 +3,6 @@
 # Purpose: Run all install scripts in the correct order with clear output and safe defaults.
 # Author:  Nicklas Rudolfsson (NIRUCON)
 # Output:  Clear, English-only status messages. Fail-fast on errors.
-# Notes:   • Not interactive by default; suitable for unattended runs
-#          • Each step can be toggled/skipped via flags
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -24,23 +22,26 @@ command -v pacman >/dev/null 2>&1 || { fail "This orchestrator targets Arch (pac
 # ───────── Defaults ─────────
 DRY_RUN=0
 STEPS=(core lookandfeel suckless statusbar apps optimize)
-SCK_SOURCE="vanilla"    # vanilla|nirucon for install_suckless.sh
-SCK_NO_FONTS=0          # pass --no-fonts to install_suckless.sh
-CORE_NO_SNAPSHOTS=0     # pass --no-snapshots to install_core.sh
-CORE_NO_UPGRADE=0       # pass --no-upgrade to install_core.sh
-APPS_NO_YAY=0           # pass --no-yay to install_apps.sh
-APPS_NO_FILES=0         # pass --no-files to install_apps.sh
-OPTI_DISABLE=0          # skip optimize step
+
+SCK_SOURCE="vanilla"   # default non-interactive choice
+ASK_SUCKLESS=0         # when 1: let install_suckless.sh prompt (TTY only)
+SCK_NO_FONTS=0
+CORE_NO_SNAPSHOTS=0
+CORE_NO_UPGRADE=0
+APPS_NO_YAY=0
+APPS_NO_FILES=0
+OPTI_DISABLE=0
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
-PATH="$HOME/.local/bin:$PATH"  # ensure local bin early for subsequent scripts
+PATH="$HOME/.local/bin:$PATH"
 
 usage(){ cat <<'EOF'
 alpi.sh — options
-  --only list          Comma-separated subset of steps (core,lookandfeel,suckless,statusbar,apps,optimize)
+  --only list          Comma-separated subset (core,lookandfeel,suckless,statusbar,apps,optimize)
   --skip list          Comma-separated steps to skip
-  --nirucon            Build suckless from github.com/nirucon/suckless (default: vanilla)
+  --nirucon            Build suckless from github.com/nirucon/suckless (non-interactive)
+  --ask-suckless       Ask interactively (TTY) Vanilla vs Custom when running suckless step
   --no-fonts           Do not install fonts in install_suckless.sh
   --no-snapshots       Do not set up timeshift/autosnap in install_core.sh
   --no-upgrade         Skip pacman -Syu in install_core.sh
@@ -51,27 +52,20 @@ alpi.sh — options
   -h|--help            Show this help
 
 Design:
-• Order: core → lookandfeel → suckless → statusbar → apps → optimize.
-• install_suckless.sh manages ~/.xinitrc hooks; statusbar install does NOT modify xinit by default.
-• Each sub-script is run with flags to avoid overlap and ensure idempotence.
+• Order: core → lookandfeel → suckless → statusbar → apps → optimize
+• --ask-suckless lets you pick Vanilla vs Custom; otherwise default is non-interactive.
 EOF
 }
 
 parse_csv(){ local IFS=","; read -r -a _arr <<<"$1"; printf '%s\n' "${_arr[@]}"; }
 contains(){ local n=$1; shift; for e; do [[ $e == "$n" ]] && return 0; done; return 1; }
 
-# Array-safe runner:
-# * One argument → run in a shell (allows pipes/&& for rare cases).
-# * Multiple arguments → exec exactly (no word-splitting; perfect for "${arr[@]}").
+# Array-safe runner
 run(){
   if [[ $DRY_RUN -eq 1 ]]; then
     printf "${CYN}[ALPI]${NC} [dry-run] %s\n" "$*"
   else
-    if [[ $# -eq 1 ]]; then
-      bash -lc "$1"
-    else
-      "$@"
-    fi
+    if [[ $# -eq 1 ]]; then bash -lc "$1"; else "$@"; fi
   fi
 }
 
@@ -79,7 +73,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --only)    mapfile -t STEPS < <(parse_csv "$2"); shift 2;;
     --skip)    readarray -t SKIP_STEPS < <(parse_csv "$2"); shift 2;;
-    --nirucon) SCK_SOURCE="nirucon"; shift;;
+    --nirucon) SCK_SOURCE="nirucon"; ASK_SUCKLESS=0; shift;;
+    --ask-suckless) ASK_SUCKLESS=1; shift;;
     --no-fonts) SCK_NO_FONTS=1; shift;;
     --no-snapshots) CORE_NO_SNAPSHOTS=1; shift;;
     --no-upgrade)   CORE_NO_UPGRADE=1; shift;;
@@ -92,14 +87,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Resolve script paths (prefer local directory)
+# Resolve scripts
 LOOK="$SCRIPT_DIR/install_lookandfeel.sh"
 SUCK="$SCRIPT_DIR/install_suckless.sh"
 SBAR="$SCRIPT_DIR/install_statusbar.sh"
 CORE="$SCRIPT_DIR/install_core.sh"
 APPS="$SCRIPT_DIR/install_apps.sh"
 OPTI="$SCRIPT_DIR/install_optimize.sh"
-
 for f in "$LOOK" "$SUCK" "$SBAR" "$CORE" "$APPS" "$OPTI"; do
   [[ -f "$f" ]] || { fail "Missing script: $f"; }
   chmod +x "$f" || true
@@ -128,15 +122,19 @@ for stepname in "${STEPS[@]}"; do
       ;;
     suckless)
       step "[3/6] Suckless stack (dwm, st, dmenu, slock, slstatus)"
-      args=(--jobs "$JOBS" --source "$SCK_SOURCE")
+      args=(--jobs "$JOBS")
       (( SCK_NO_FONTS==1 )) && args+=(--no-fonts)
       (( DRY_RUN==1 )) && args+=(--dry-run)
+      if (( ASK_SUCKLESS==0 )); then
+        # Non-interactive: pass explicit source
+        args+=(--source "$SCK_SOURCE")
+      fi
       run "$SUCK" "${args[@]}"
       ;;
     statusbar)
       step "[4/6] Status bar (dwm-status.sh)"
       args=()
-      # Do NOT add --hook-xinit; .xinitrc is managed by install_suckless.sh
+      # Keep .xinitrc managed by suckless; no --hook-xinit here by default
       (( DRY_RUN==1 )) && args+=(--dry-run)
       run "$SBAR" "${args[@]}"
       ;;
@@ -155,8 +153,7 @@ for stepname in "${STEPS[@]}"; do
       (( DRY_RUN==1 )) && args+=(--dry-run)
       run "$OPTI" "${args[@]}"
       ;;
-    *)
-      warn "Unknown step: $stepname (skipping)";;
+    *) warn "Unknown step: $stepname (skipping)";;
   esac
   say "Completed step: $stepname"
 done
@@ -166,8 +163,8 @@ cat <<'EOT'
 ALPI complete
 
 Order executed: core → lookandfeel → suckless → statusbar → apps → optimize
-• You can re-run safely; each script is idempotent and uses --needed/backups.
-• For custom flows, use --only or --skip. Example:
-  ./alpi.sh --only lookandfeel,suckless --nirucon --jobs 8
+• Re-run safely; idempotent installs and backups are used.
+• Want to pick Vanilla vs Custom? Use:  ./alpi.sh --ask-suckless
+• Force custom non-interactively:    ./alpi.sh --nirucon
 ========================================================
 EOT
