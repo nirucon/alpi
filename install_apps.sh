@@ -116,7 +116,7 @@ YAY_PKGS_BASE=(
   spotify                  # music (cmus is better ofc)
   xautolock                # lock screen
   timeshift-autosnap       # snaps
-  localsend                # files
+  localsend-bin            # files
 )
 
 # ───────── Optional extension via files ─────────
