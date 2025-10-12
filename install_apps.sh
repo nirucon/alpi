@@ -95,11 +95,11 @@ PACMAN_PKGS_BASE=(
   papirus-icon-theme # pcmanfm styling
   gimp               #
   nextcloud-client   # sync stuff
-  localsend-bin      # 
   mpv                #
   jq                 #
   fzf                #
   btop               # sysinfo
+  localsend-bin      # 
 
   # Neovim + tooling (LazyVim deps)
   neovim
