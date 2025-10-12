@@ -3,6 +3,8 @@
 # Purpose: Install a robust, dependency-light dwm status script to ~/.local/bin without
 #          touching other configs. Pairs cleanly with install_suckless.sh & install_lookandfeel.sh.
 # Author:  Nicklas Rudolfsson (NIRUCON)
+# Output:  Clear, English-only status messages. Safe & idempotent.
+# Notes:   By default, this script does NOT edit ~/.xinitrc. You can opt in with --hook-xinit.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -30,7 +32,7 @@ DRY_RUN=0
 
 usage(){ cat <<'EOF'
 install_statusbar.sh — options
-  --hook-xinit      Append a one-line launcher to ~/.xinitrc (idempotent)
+  --hook-xinit      Append a one-line launcher to ~/.xinitrc (idempotent; file must already exist)
   --no-path         Do NOT modify ~/.bash_profile to add ~/.local/bin to PATH
   --no-deps         Do NOT attempt to install runtime dependencies
   --dry-run         Print actions without changing the system
@@ -63,27 +65,26 @@ ensure_dir(){ mkdir -p "$1"; }
 ensure_dir "$LOCAL_BIN"
 
 # ───────── Minimal runtime deps (best-effort) ─────────
-# We do NOT install heavy deps; just helpful tools if missing. Safe to skip with --no-deps.
+# Keep this light; do not fail if a package is missing in a custom repo setup.
 if (( INSTALL_DEPS == 1 )); then
   if command -v pacman >/dev/null 2>&1; then
     step "Ensuring minimal runtime tools exist (best-effort)"
-    run "sudo pacman -S --needed --noconfirm xorg-xsetroot inetutils grep sed coreutils fontconfig gawk"
-    # Wi-Fi helpers if available in repos
-    run "sudo pacman -S --needed --noconfirm iw networkmanager || true"
-    # DBus helper for Nextcloud status parsing
-    run "sudo pacman -S --needed --noconfirm glib2 || true" || true
+    # Needed binaries: xsetroot (xorg-xsetroot), fc-list (fontconfig), gdbus (from glib2),
+    # text tools (grep/sed/gawk/coreutils), Wi-Fi utilities (wireless_tools for iwgetid),
+    # and nmcli fallback (networkmanager).
+    run "sudo pacman -S --needed --noconfirm xorg-xsetroot fontconfig glib2 grep sed gawk coreutils wireless_tools networkmanager || true"
   else
     warn "pacman not found; skipping dependency install"
   fi
 else
-  warn "--no-deps set: skipping dependency checks"
+  say "Skipping dependency checks (--no-deps)"
 fi
 
 # ───────── Ensure ~/.local/bin on PATH ─────────
 if (( ENSURE_PATH == 1 )); then
   if ! printf '%s' "$PATH" | grep -q "$HOME/.local/bin"; then
     step "Adding ~/.local/bin to PATH via ~/.bash_profile"
-    run "grep -qxF 'export PATH=\"$HOME/.local/bin:$PATH\"' '$HOME/.bash_profile' 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> '$HOME/.bash_profile'"
+    run "grep -qxF 'export PATH=\"$HOME/.local/bin:$PATH\"' '$HOME/.bash_profile' 2>/dev/null || echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> '$HOME/.bash_profile'"
   else
     say "~/.local/bin already present in PATH"
   fi
