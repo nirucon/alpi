@@ -149,7 +149,7 @@ fi
 # Start compositor (for transparency, shadows, etc.)
 # ────────────────────────────────────────────────
 if command -v picom >/dev/null; then
-    picom --experimental-backends &
+    picom &
 fi
 
 # ────────────────────────────────────────────────
