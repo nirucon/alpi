@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# install_suckless.sh — build & install the suckless stack (dwm, st, dmenu, slock)
+# install_suckless.sh — build & install the suckless stack (dwm, st, dmenu, slock, slstatus)
 # Purpose: Compile and install suckless programs with zero/own patches, wire a safe ~/.xinitrc,
 #          and (optionally) install minimal deps & fonts if missing.
 # Author:  Nicklas Rudolfsson (NIRUCON)
+# Output:  Clear, English-only status messages. Safe & idempotent where possible.
+# Notes:   • picom.conf is handled by install_lookandfeel.sh (not here)
+#          • status bar script is installed by install_statusbar.sh (we only ensure hooks)
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -59,26 +62,28 @@ install_suckless.sh — options
   --jobs N           Parallel make -j (default: nproc)
   --dry-run          Print actions without changing the system
   -h|--help          Show this help
-
-Design:
-• picom.conf is NOT managed here (install_lookandfeel.sh).
-• Status bar content comes from install_statusbar.sh; we only ensure hooks in .xinitrc.
-• Non-interactive by default (safe for running in a series by alpi.sh).
 EOF
+}
+
+# Defensive: fetch the next argument or fail clearly
+need_val(){ # $1 = opt name
+  if [[ $# -lt 2 || -z ${2:-} ]]; then
+    fail "Option $1 requires a value. See --help."
+  fi
 }
 
 parse_components(){ IFS=',' read -r -a COMPONENTS <<<"$1"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --source) SOURCE_MODE="$2"; shift 2;;
-    --prefix) PREFIX="$2"; shift 2;;
-    --only)   parse_components "$2"; shift 2;;
+    --source)  need_val "$1" "${2:-}"; SOURCE_MODE="$2"; shift 2;;
+    --prefix)  need_val "$1" "${2:-}"; PREFIX="$2"; shift 2;;
+    --only)    need_val "$1" "${2:-}"; parse_components "$2"; shift 2;;
+    --jobs)    need_val "$1" "${2:-}"; JOBS="$2"; shift 2;;
     --no-xinit) MANAGE_XINIT=0; shift;;
     --no-fonts) INSTALL_FONTS=0; shift;;
-    --jobs)   JOBS="$2"; shift 2;;
-    --dry-run) DRY_RUN=1; shift;;
-    -h|--help) usage; exit 0;;
+    --dry-run)  DRY_RUN=1; shift;;
+    -h|--help)  usage; exit 0;;
     *) warn "Unknown argument: $1"; usage; exit 1;;
   esac
 done
@@ -98,11 +103,7 @@ pkg_install(){
               xorg-xsetroot xorg-xinit)
   if command -v pacman >/dev/null 2>&1; then
     step "Installing build/runtime dependencies via pacman (if missing)"
-    if [[ $DRY_RUN -eq 1 ]]; then
-      say "[dry-run] sudo pacman -S --needed --noconfirm ${pkgs[*]}"
-    else
-      sudo pacman -S --needed --noconfirm "${pkgs[@]}" || warn "pacman dependency install failed (continuing)"
-    fi
+    run "sudo pacman -S --needed --noconfirm ${pkgs[*]} || true"
   else
     warn "pacman not found; ensure build dependencies are present manually."
   fi
@@ -119,7 +120,7 @@ fonts_install_if_missing(){
   if command -v pacman >/dev/null 2>&1; then
     if (( need_icon==1 )); then
       say "Installing ${FONT_ICON} via pacman"
-      run "sudo pacman -S --needed --noconfirm ttf-nerd-fonts-symbols-mono"
+      run "sudo pacman -S --needed --noconfirm ttf-nerd-fonts-symbols-mono || true"
     fi
   fi
   if (( need_main==1 )); then
@@ -177,19 +178,15 @@ case "$SOURCE_MODE" in
     clone_or_pull "$NIRUCON_REPO" "$SUCKLESS_DIR"
     ;;
   *) fail "Unknown --source value: $SOURCE_MODE";;
-endcase
+esac
 
 # ───────── Build & install ─────────
 for comp in "${COMPONENTS[@]}"; do
-  case "$SOURCE_MODE" in
-    vanilla|nirucon)
-      if [[ -d "$SUCKLESS_DIR/$comp" ]]; then
-        make_install "$SUCKLESS_DIR/$comp" "$comp"
-      else
-        warn "$comp not found under $SUCKLESS_DIR — skipping"
-      fi
-      ;;
-  esac
+  if [[ -d "$SUCKLESS_DIR/$comp" ]]; then
+    make_install "$SUCKLESS_DIR/$comp" "$comp"
+  else
+    warn "$comp not found under $SUCKLESS_DIR — skipping"
+  fi
 done
 
 # ───────── .xinitrc wiring (idempotent, includes your hooks) ─────────
@@ -210,13 +207,13 @@ if command -v nitrogen >/dev/null; then
   nitrogen --restore &
 fi
 
-# Optional rotating wallpapers every 15 minutes (if script exists)
+# Rotating wallpapers every 15 minutes (if script exists)
 # Script: ~/.local/bin/wallrotate.sh
 if [ -x "$HOME/.local/bin/wallrotate.sh" ]; then
   "$HOME/.local/bin/wallrotate.sh" &
 fi
 
-# Optional Nextcloud sync client (if installed)
+# Nextcloud sync client (if installed)
 if command -v nextcloud >/dev/null; then
   nextcloud --background &
 fi
@@ -229,7 +226,7 @@ fi
 # Start status bar if installed (installed by install_statusbar.sh)
 [ -x "$HOME/.local/bin/dwm-status.sh" ] && "$HOME/.local/bin/dwm-status.sh" &
 
-# Optional auto-lock after 10 min if tools are present
+# Auto-lock after 10 min if tools are present
 if command -v xautolock >/dev/null && command -v slock >/dev/null; then
   xautolock -time 10 -locker slock &
 fi
@@ -257,7 +254,6 @@ else
   warn "--no-xinit set: leaving ~/.xinitrc untouched"
 fi
 
-# ───────── Final notes ─────────
 cat <<'EOT'
 ========================================================
 Suckless install finished
@@ -266,10 +262,5 @@ Suckless install finished
 • picom.conf was not modified (managed by install_lookandfeel.sh)
 • Status bar hook present; run install_statusbar.sh to install bar script
 • Start X with:  startx
-
-Tips:
-• Choose source with --source vanilla|nirucon (non-interactive, ALPI-friendly)
-• Use --no-fonts to skip font checks (if handled elsewhere)
-• Override PREFIX with --prefix if you prefer /usr
 ========================================================
 EOT
