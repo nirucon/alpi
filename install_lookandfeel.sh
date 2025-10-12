@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# install_lookandfeel.sh — theme, dotfiles & helper scripts (FIXED BACKUP)
+# install_lookandfeel.sh — theme, dotfiles & helper scripts
 # Purpose: Pull files from https://github.com/nirucon/suckless_lookandfeel (or a local path),
 #          install helper scripts to ~/.local/bin (chmod +x), and place picom.conf correctly.
-# Author:  Nicklas Rudolfsson (NIRUCON) — refactored for robust backups and 'set -u' safety.
+# Author:  Nicklas Rudolfsson (NIRUCON)
 
 set -Eeuo pipefail
 IFS=$'\n\t'
