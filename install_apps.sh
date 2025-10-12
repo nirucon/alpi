@@ -99,7 +99,7 @@ PACMAN_PKGS_BASE=(
   jq                 #
   fzf                #
   btop               # sysinfo
-  localsend-bin      # 
+  localsend          # 
 
   # Neovim + tooling (LazyVim deps)
   neovim
