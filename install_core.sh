@@ -3,6 +3,9 @@
 # Purpose: Set up core system pieces (snapshots, base CLI, Xorg/graphics/audio/network essentials),
 #          with clear, English-only output and idempotent behavior.
 # Author:  Nicklas Rudolfsson (NIRUCON)
+# Notes:   • Does NOT touch ~/.xinitrc (that is handled in install_suckless.sh)
+#          • Does NOT install look & feel (handled in install_lookandfeel.sh)
+#          • Safe to run multiple times; uses --needed and backups where applicable
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -47,12 +50,25 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else eval "$@"; fi }
+# ───────── Runner (safe for arrays) ─────────
+# If called with a single string → run through a shell (allows pipes/&&).
+# If called with multiple args → run as an argv list (ideal for "${arr[@]}").
+run() {
+  if [[ $DRY_RUN -eq 1 ]]; then
+    say "[dry-run] $*"
+  else
+    if [[ $# -eq 1 ]]; then
+      bash -lc "$1"
+    else
+      "$@"
+    fi
+  fi
+}
 
 # ───────── Timeshift + autosnap (optional) ─────────
 if (( ENABLE_SNAPSHOTS==1 )); then
   step "Installing timeshift + autosnap (best-effort)"
-  run "sudo pacman -S --needed --noconfirm timeshift"
+  run sudo pacman -S --needed --noconfirm timeshift
   # autosnap from AUR (yay) if available
   if command -v yay >/dev/null 2>&1; then
     run "yay -S --needed --noconfirm timeshift-autosnap"
@@ -73,12 +89,12 @@ fi
 ensure_home_bin(){ mkdir -p "$HOME/.local/bin"; }
 ensure_home_bin
 
-# ───────── Base packages ─────────
+# ───────── Core package set ─────────
 # Keep these light; apps belong in install_apps.sh
 BASE_PKGS=(
-  # CLI
+  # CLI & dev
   base base-devel git make gcc pkgconf curl wget unzip zip tar rsync
-  grep sed awk findutils coreutils which diffutils gawk
+  grep sed findutils coreutils which diffutils gawk
   htop less nano vim man-db man-pages tree
 
   # Shell helpers
@@ -101,14 +117,15 @@ BASE_PKGS=(
 )
 
 step "Installing core packages"
-run "sudo pacman -S --needed --noconfirm ${BASE_PKGS[*]}"
+# IMPORTANT: use array expansion so newlines/spaces don't split commands
+run sudo pacman -S --needed --noconfirm "${BASE_PKGS[@]}"
 
-# Enable NetworkManager + UFW (safe if already enabled)
+# ───────── Enable services ─────────
 step "Enabling services (NetworkManager, ufw)"
 run "sudo systemctl enable --now NetworkManager"
 run "sudo systemctl enable --now ufw || true"
 
-# UFW sane defaults (idempotent)
+# ───────── UFW sane defaults (idempotent) ─────────
 if command -v ufw >/dev/null 2>&1; then
   step "Configuring ufw (allow out, deny in)"
   run "sudo ufw default deny incoming || true"
