@@ -191,19 +191,103 @@ if [[ $MANAGE_XINIT -eq 1 ]]; then
   if [[ ! -f "$XINIT" ]]; then
     cat > "$XINIT" <<'EOF'
 #!/bin/sh
+# =============================================================================
+#  .xinitrc — Arch Linux + Suckless Nirucon setup
+# =============================================================================
+
+#----------------------------#
+# 1) Basic session hygiene   #
+#----------------------------#
+
+# Always start in $HOME
 cd "$HOME"
-setxkbmap se
-xsetroot -solid "#111111"
-command -v nitrogen >/dev/null && nitrogen --restore &
-[ -x "$HOME/.local/bin/wallrotate.sh" ] && "$HOME/.local/bin/wallrotate.sh" &
-command -v nextcloud >/dev/null && nextcloud --background &
-command -v picom >/dev/null && picom &
+
+# If no user D-Bus is present, re-exec this script under dbus-run-session.
+# This is the most reliable way to get a working session bus for X11 + startx.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS-}" ] && command -v dbus-run-session >/dev/null 2>&1; then
+  exec dbus-run-session "$0" "$@"
+fi
+
+# Export X env vars to systemd --user so user services (like dunst.service) can find DISPLAY/XAUTHORITY.
+# Harmless if systemd user instance isn't running.
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  dbus-update-activation-environment --systemd DISPLAY XAUTHORITY
+fi
+
+# Merge X resources if present (fonts, colors, DPI, etc.)
+[ -r "$HOME/.Xresources" ] && xrdb -merge "$HOME/.Xresources"
+
+# Keyboard layout (set yours; example: Swedish). Comment this out if configured elsewhere.
+command -v setxkbmap >/dev/null 2>&1 && setxkbmap se
+
+# Set a simple root background color (prevents unstyled root-window flash).
+command -v xsetroot >/dev/null 2>&1 && xsetroot -solid "#111111"
+
+# Optional: enable NumLock if available
+command -v numlockx >/dev/null 2>&1 && numlockx on
+
+# Optional: HiDPI scaling example via xrandr (uncomment and adjust as needed)
+# command -v xrandr >/dev/null 2>&1 && xrandr --output eDP-1 --scale 0.75x0.75
+
+#--------------------------------#
+# 2) Autostart helper programs   #
+#--------------------------------#
+
+# Compositor (tear-free, transparency). Remove if you prefer no compositor.
+command -v picom >/dev/null 2>&1 && picom &
+
+# Wallpaper restore (Nitrogen). Safe no-op if missing.
+command -v nitrogen >/dev/null 2>&1 && nitrogen --restore &
+
+# Cloud client (Nextcloud) in background mode if installed.
+command -v nextcloud >/dev/null 2>&1 && nextcloud --background &
+
+# Notifications (dunst). Start explicitly so notify-send works immediately.
+# If you prefer the systemd user unit, this is still safe; dunst will refuse a duplicate.
+command -v dunst >/dev/null 2>&1 && dunst &
+
+# DWM status bar
 [ -x "$HOME/.local/bin/dwm-status.sh" ] && "$HOME/.local/bin/dwm-status.sh" &
-if command -v xautolock >/dev/null && command -v slock >/dev/null; then xautolock -time 10 -locker slock & fi
+
+# Optional: screen locker on idle (requires both xautolock + slock).
+if command -v xautolock >/dev/null 2>&1 && command -v slock >/dev/null 2>&1; then
+  # Lock after 10 minutes idle; adjust to taste.
+  xautolock -time 10 -locker slock &
+fi
+
+# Wallpaper rotator
+[ -x "$HOME/.local/bin/wallrotate.sh" ] && "$HOME/.local/bin/wallrotate.sh" &
+
+# Polkit agent
+if command -v /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 >/dev/null 2>&1; then
+  /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
+fi
+
+#----------------------------------------------#
+# 3) Clean teardown & robust DWM launch loop   #
+#----------------------------------------------#
+
+# Ensure all background children die when this script exits.
 trap 'kill -- -$$' EXIT
-while true; do
-  "$(command -v dwm || echo /usr/local/bin/dwm)" 2> /tmp/dwm.log
+
+# Path to log DWM
+DWM_LOG="/tmp/dwm.log"
+
+# Find DWM binary (installed or custom-compiled).
+DWM_BIN="$(command -v dwm || echo /usr/local/bin/dwm)"
+
+# Restart policy:
+# - If DWM exits with code 0 (normal quit), stop the loop and end session.
+# - If it crashes (non-zero), restart automatically.
+while :; do
+  "$DWM_BIN" 2>"$DWM_LOG"
+  status=$?
+  [ $status -eq 0 ] && break
+  # Brief pause to avoid rapid restart loops in case of immediate crash
+  sleep 0.5
 done
+
+# If we get here with status 0, session exits cleanly (dbus-run-session will also exit).
 EOF
     chmod 644 "$XINIT"
   else
