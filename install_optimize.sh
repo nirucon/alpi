@@ -31,6 +31,8 @@ backup(){
   warn "Backup: $f -> $b"
 }
 
+sudo pacman -S --needed pciutils usbutils
+
 # ──────────────────────────────────────────────────────────────────────────────
 #                           Firmware optimization (NEW)
 #   Installs only firmware that matches this machine + correct CPU microcode.
@@ -88,7 +90,7 @@ fw_optimize() {
   shopt -u nocasematch
 
   say   "Firmware: CPU vendor: ${cpu:-unknown}"
-  info  "Firmware: Intel:${has_intel} AMD/ATI:${has_amd} NVIDIA:${has_nvidia} Realtek:${has_realtek} MediaTek:${has_mediatek} Broadcom:${has_broadcom} Atheros/Qualcomm:${has_atheros} Cirrus:${has_cirrus}"
+  say "Firmware: Intel:${has_intel} AMD/ATI:${has_amd} NVIDIA:${has_nvidia} Realtek:${has_realtek} Mediatek:${has_mediatek} Broadcom:${has_broadcom} Atheros/Qualcomm:${has_atheros} Cirrus:${has_cirrus}"
 
   # Decide desired firmware packages
   local desired=()
