@@ -1,106 +1,128 @@
 #!/usr/bin/env bash
-# CORE – by Nicklas Rudolfsson https://github.com/nirucon
-# English-only output
+# install_core.sh — baseline system setup for Arch
+# Purpose: Set up core system pieces (snapshots, base CLI, Xorg/graphics/audio/network essentials),
+#          with clear, English-only output and idempotent behavior.
+# Author:  Nicklas Rudolfsson (NIRUCON)
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-info(){ printf "\033[1;32m[CORE]\033[0m %s\n" "$*"; }
-warn(){ printf "\033[1;33m[CORE]\033[0m %s\n" "$*"; }
-fail(){ printf "\033[1;31m[CORE]\033[0m %s\n" "$*" >&2; }
+# ───────── Pretty logging ─────────
+GRN="\033[1;32m"; BLU="\033[1;34m"; YLW="\033[1;33m"; RED="\033[1;31m"; NC="\033[0m"
+say()  { printf "${GRN}[CORE]${NC} %s\n" "$*"; }
+step() { printf "${BLU}==>${NC} %s\n" "$*"; }
+warn() { printf "${YLW}[WARN]${NC} %s\n" "$*"; }
+fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
+trap 'fail "install_core.sh failed. See previous messages for details."' ERR
 
-trap 'fail "install_core.sh failed. See logs above for details."' ERR
+# ───────── Safety ─────────
+[[ ${EUID:-$(id -u)} -ne 0 ]] || { fail "Do not run as root."; exit 1; }
+command -v sudo >/dev/null 2>&1 || { fail "sudo not found"; exit 1; }
 
-# -----------------------------------------------------------------------------
-# Timeshift + autosnap hook (works with Limine; no grub-btrfs needed)
-# Place this BEFORE any system upgrade so the pre-transaction snapshot runs now.
-# -----------------------------------------------------------------------------
-if ! command -v timeshift >/dev/null 2>&1; then
-  info "Installing Timeshift…"
-  sudo pacman -S --noconfirm --needed timeshift
-else
-  info "Timeshift already installed (skipping)."
-fi
+# ───────── Flags ─────────
+DRY_RUN=0
+FULL_UPGRADE=1         # can be disabled with --no-upgrade
+ENABLE_SNAPSHOTS=1     # can be disabled with --no-snapshots
 
-# If you have an AUR helper (yay), prefer the official autosnap package.
-if command -v yay >/dev/null 2>&1; then
-  if ! pacman -Qi timeshift-autosnap >/dev/null 2>&1; then
-    info "Installing timeshift-autosnap (AUR) to enable pacman pre-transaction snapshots…"
-    yay -S --noconfirm --needed timeshift-autosnap
-  else
-    info "timeshift-autosnap already installed (skipping)."
-  fi
-else
-  # Minimal built-in pacman hook as a fallback when AUR is unavailable.
-  if [[ ! -f /etc/pacman.d/hooks/50-timeshift-pre.hook ]]; then
-    info "Creating minimal pacman hook for Timeshift pre-transaction snapshots…"
-    sudo install -d -m 755 /etc/pacman.d/hooks
-    sudo tee /etc/pacman.d/hooks/50-timeshift-pre.hook >/dev/null <<'EOF'
-[Trigger]
-Operation = Upgrade
-Operation = Install
-Operation = Remove
-Type = Package
-Target = *
+usage(){ cat <<'EOF'
+install_core.sh — options
+  --no-upgrade      Skip pacman -Syu
+  --no-snapshots    Skip Timeshift + autosnap hook
+  --dry-run         Print actions without changing the system
+  -h|--help         Show this help
 
-[Action]
-Description = Timeshift: create pre-transaction snapshot
-When = PreTransaction
-Exec = /usr/bin/timeshift --create --comments "pre-pacman" --tags P
-NeedsTargets
+Design:
+• Installs base developer CLI, network, Xorg, audio, micro-utilities.
+• Optional pre-transaction snapshots via timeshift-autosnap.
 EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-upgrade)   FULL_UPGRADE=0; shift;;
+    --no-snapshots) ENABLE_SNAPSHOTS=0; shift;;
+    --dry-run)      DRY_RUN=1; shift;;
+    -h|--help)      usage; exit 0;;
+    *) warn "Unknown argument: $1"; usage; exit 1;;
+  esac
+done
+
+run(){ if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else eval "$@"; fi }
+
+# ───────── Timeshift + autosnap (optional) ─────────
+if (( ENABLE_SNAPSHOTS==1 )); then
+  step "Installing timeshift + autosnap (best-effort)"
+  run "sudo pacman -S --needed --noconfirm timeshift"
+  # autosnap from AUR (yay) if available
+  if command -v yay >/dev/null 2>&1; then
+    run "yay -S --needed --noconfirm timeshift-autosnap"
   else
-    info "Timeshift pacman hook already present (skipping)."
+    warn "yay not found — skipping timeshift-autosnap"
   fi
 fi
 
-# Optional: take an initial baseline snapshot
-if sudo timeshift --list >/dev/null 2>&1; then
-  info "Creating initial Timeshift snapshot (baseline)…"
-  sudo timeshift --create --comments "Initial snapshot" --tags O || true
+# ───────── System upgrade (optional) ─────────
+if (( FULL_UPGRADE==1 )); then
+  step "Syncing & upgrading system"
+  run "sudo pacman -Syu --noconfirm"
 else
-  warn "Timeshift not initialized yet; baseline snapshot skipped."
+  warn "--no-upgrade set: skipping pacman -Syu"
 fi
 
-# -----------------------------------------------------------------------------
-# System refresh AFTER the autosnap hook is installed
-# -----------------------------------------------------------------------------
-info "Syncing and upgrading system (pacman -Syu)…"
-sudo pacman --noconfirm -Syu
+# ───────── Ensure ~/.local/bin exists ─────────
+ensure_home_bin(){ mkdir -p "$HOME/.local/bin"; }
+ensure_home_bin
 
-# -----------------------------------------------------------------------------
-# Ensure ~/.local/bin exists
-# -----------------------------------------------------------------------------
-HOME_BIN="$HOME/.local/bin"
-mkdir -p "$HOME_BIN"
+# ───────── Base packages ─────────
+# Keep these light; apps belong in install_apps.sh
+BASE_PKGS=(
+  # CLI
+  base base-devel git make gcc pkgconf curl wget unzip zip tar rsync
+  grep sed awk findutils coreutils which diffutils gawk
+  htop less nano vim man-db man-pages tree
 
-# -----------------------------------------------------------------------------
-# Base Xorg, audio, networking, and essentials
-# -----------------------------------------------------------------------------
-info "Installing base packages for Xorg, audio, and networking…"
-sudo pacman --noconfirm --needed -S \
-  base-devel git \
-  xorg-server xorg-xinit xorg-xrandr xorg-xsetroot \
-  libx11 libxft libxinerama freetype2 fontconfig \
-  ttf-dejavu noto-fonts ttf-nerd-fonts-symbols-mono \
-  networkmanager wireless_tools iw \
-  pipewire pipewire-alsa pipewire-pulse wireplumber \
-  alsa-utils brightnessctl imlib2
+  # Shell helpers
+  bash-completion
 
-# Enable NM so Wi-Fi/ethernet works out of the box
-info "Enabling NetworkManager…"
-sudo systemctl enable --now NetworkManager.service
+  # Network basics
+  networkmanager openssh inetutils bind-tools iproute2
 
-# -----------------------------------------------------------------------------
-# Auto-start X on tty1 for a smooth first login
-# -----------------------------------------------------------------------------
-BASH_PROFILE="$HOME/.bash_profile"
-AUTO_START='[ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ] && exec startx'
-if ! grep -qxF "$AUTO_START" "$BASH_PROFILE" 2>/dev/null; then
-  info "Enabling startx auto-launch on tty1…"
-  printf '%s\n' "$AUTO_START" >> "$BASH_PROFILE"
-else
-  warn "startx auto-launch already present in ~/.bash_profile (kept as-is)."
+  # Audio (PipeWire stack)
+  pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber pavucontrol
+
+  # Xorg minimal + utilities
+  xorg-server xorg-xinit xorg-xsetroot xorg-xrandr xorg-xset xorg-xinput
+
+  # Fonts minimal (icons handled elsewhere)
+  ttf-dejavu noto-fonts
+
+  # Misc
+  ufw
+)
+
+step "Installing core packages"
+run "sudo pacman -S --needed --noconfirm ${BASE_PKGS[*]}"
+
+# Enable NetworkManager + UFW (safe if already enabled)
+step "Enabling services (NetworkManager, ufw)"
+run "sudo systemctl enable --now NetworkManager"
+run "sudo systemctl enable --now ufw || true"
+
+# UFW sane defaults (idempotent)
+if command -v ufw >/dev/null 2>&1; then
+  step "Configuring ufw (allow out, deny in)"
+  run "sudo ufw default deny incoming || true"
+  run "sudo ufw default allow outgoing || true"
+  run "sudo ufw enable || true"
 fi
 
-info "CORE step complete."
+cat <<'EOT'
+========================================================
+Core setup complete
+
+• System upgraded (unless --no-upgrade)
+• Timeshift installed (autosnap if yay exists)
+• Base CLI, Xorg, audio, network installed
+• NetworkManager and ufw enabled
+========================================================
+EOT
