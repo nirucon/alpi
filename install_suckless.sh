@@ -277,14 +277,8 @@ DWM_LOG="/tmp/dwm.log"
 DWM_BIN="$(command -v dwm || echo /usr/local/bin/dwm)"
 
 # Restart policy:
-# - If DWM exits with code 0 (normal quit), stop the loop and end session.
-# - If it crashes (non-zero), restart automatically.
-while :; do
-  "$DWM_BIN" 2>"$DWM_LOG"
-  status=$?
-  [ $status -eq 0 ] && break
-  # Brief pause to avoid rapid restart loops in case of immediate crash
-  sleep 0.5
+while true; do
+  /usr/local/bin/dwm 2>/tmp/dwm.log
 done
 
 # If we get here with status 0, session exits cleanly (dbus-run-session will also exit).
