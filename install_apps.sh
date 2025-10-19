@@ -110,6 +110,8 @@ PACMAN_PKGS_BASE=(
   python-pynvim      # python provider
   nodejs npm         # node provider (LSPs, formatters via Mason)
   git
+  wireless_tools
+  iw
 )
 
 YAY_PKGS_BASE=(
