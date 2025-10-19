@@ -95,225 +95,238 @@ if [[ $DRY_RUN -eq 1 ]]; then
 else
   install -Dm755 /dev/stdin "$LOCAL_BIN/dwm-status.sh" <<'EOF'
 #!/usr/bin/env bash
-# DWM status:
-# Icons first (if a Nerd Font is available), otherwise fall back to compact text.
-# Icon example: [  87% |  my-ssid |  online | 2025-10-12 w:41 | 09:05 ]
-# Text example:  [ B: 87% | N: my-ssid | S: online | 2025-10-12 w:41 | 09:05 ]
+# DWM statusbar (Arch Linux)
+# --------------------------------------------------------
+# Displays (left → right): VOLUME | BATTERY | WIFI-SSID | NEXTCLOUD | DATE | TIME
+# Icons are used if a Nerd Font is available (or forced). Text fallback otherwise.
 #
-# by Nicklas Rudolfsson https://github.com/nirucon
+# Nextcloud state rules:
+#  - offline: no internet connectivity (quick ping test fails)
+#  - online: internet OK and no active sync reported by the client
+#  - syncing: Nextcloud client reports an active sync via CLI or D-Bus (heuristics)
 #
-# Env:
-DWM_STATUS_ICONS=1                # default 1; set 0 to force text-only
-DWM_STATUS_ASSUME_ICONS=1         # optional hard override to force icon mode (default 0)
-# DWM_STATUS_INTERVAL=seconds       # default 10
+# Requirements: coreutils, iputils (ping), awk, grep, sed, date
+# Optional: iwgetid or nmcli (for SSID),
+#           PipeWire/WirePlumber with 'wpctl' (for volume),
+#           Nextcloud Desktop with 'nextcloud --status' (best) or a D-Bus session.
+#
+# Environment variables:
+#   DWM_STATUS_ICONS=1        # 1 = try icons (default), 0 = text only
+#   DWM_STATUS_ASSUME_ICONS=0 # 1 = force icons even if font detection is unknown
+#   DWM_STATUS_INTERVAL=10    # refresh interval in seconds
+#   DWM_STATUS_WIFI_CMD=iwgetid|nmcli  # force SSID source
+#   DWM_STATUS_NET_PING=1.1.1.1        # ping target (default 1.1.1.1)
+#
+# Notes on reliability:
+#  - Volume: uses 'wpctl', the canonical PipeWire/WirePlumber CLI on Arch.
+#  - SSID: tries iwgetid first, falls back to nmcli; you can force either.
+#  - Nextcloud: best with Desktop client v3.9+ exposing `nextcloud --status`.
+#    If not available, we fall back to a D-Bus heuristic; otherwise you still get
+#    robust online/offline. The script is defensive and tolerant of missing tools.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Ensure common tools are available in non-interactive autostarts
-export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+# -----------------------------
+# Helpers
+# -----------------------------
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
+trim() { sed 's/^\s\+//;s/\s\+$//'; }
 
-supports_icons() {
-  # Respect explicit opt-out first
-  [ "${DWM_STATUS_ICONS:-1}" = "1" ] || return 1
+# -----------------------------
+# Icon or text mode
+# -----------------------------
+ICONS=${DWM_STATUS_ICONS:-1}
+ASSUME=${DWM_STATUS_ASSUME_ICONS:-0}
 
-  # Manual override if your login environment is quirky
-  [ "${DWM_STATUS_ASSUME_ICONS:-0}" = "1" ] && return 0
-
-  # Try fc-list
-  if command -v fc-list >/dev/null 2>&1; then
-    if fc-list | grep -qi 'Nerd Font'; then
-      return 0
-    fi
-  fi
-
-  # Fallback: fc-match -s
-  if command -v fc-match >/dev/null 2>&1; then
-    if fc-match -s | grep -qi 'Nerd Font'; then
-      return 0
-    fi
-  fi
-
-  return 1
+use_icons() {
+  # Minimal heuristic. Use ASSUME=1 if you know you run a Nerd Font in your bar.
+  if [ "$ASSUME" = "1" ]; then return 0; fi
+  [ "$ICONS" = "1" ] && return 0 || return 1
 }
 
-battery() {
-  # Show battery if present (first BAT* only, quietly skip otherwise)
-  shopt -s nullglob
-  local bat_dirs=(/sys/class/power_supply/BAT*)
-  shopt -u nullglob
-  [ ${#bat_dirs[@]} -gt 0 ] || return 0
+# Nerd Font glyphs (safe fallbacks to text exist in each part)
+icon_bat() { printf ''; }
+icon_plug() { printf ''; }
+icon_wifi() { printf ''; }
+icon_cloud() { printf ''; }
+icon_cloud_sync() { printf '󰓦'; }
+icon_cloud_off() { printf '󰅛'; }
+icon_spk() { printf ''; }
+icon_spk_mute() { printf ''; }
+icon_sep() { printf ' | '; }
 
-  local b="${bat_dirs[0]}"
-  local cap stat
-  cap="$(cat "$b/capacity" 2>/dev/null || true)"
-  [ -n "${cap:-}" ] || return 0
-  stat="$(cat "$b/status" 2>/dev/null || true)"
-
-  if supports_icons; then
-    local icon=""
-    if [ "$cap" -ge 90 ]; then
-      icon=""
-    elif [ "$cap" -ge 70 ]; then
-      icon=""
-    elif [ "$cap" -ge 50 ]; then
-      icon=""
-    elif [ "$cap" -ge 30 ]; then icon=""; fi
-
-    if [ "$stat" = "Charging" ] || [ "$stat" = "Unknown" ]; then
-      printf " %s %s%%" "$icon" "$cap"
-    else
-      printf "%s %s%%" "$icon" "$cap"
-    fi
+# -----------------------------
+# Volume (PipeWire via wpctl)
+# -----------------------------
+volume_part() {
+  if ! has_cmd wpctl; then
+    use_icons && printf " n/a" || printf "Vol: n/a"
+    return
+  fi
+  local line mute vol pct
+  line=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null || true)
+  # Typical outputs:
+  #   "Volume: 0.34 [0.00, 1.00]"
+  #   "Volume: 0.34 [0.00, 1.00] MUTE"
+  #   "Volume: 0.34 [0.00, 1.00] Mute: true"
+  mute=$(printf '%s' "$line" | grep -Eoi '(MUTE|Mute:\s*true)' | head -n1 || true)
+  vol=$(printf '%s' "$line" | awk '/Volume:/ {print $2}')
+  if [ -z "${vol:-}" ]; then
+    use_icons && printf " n/a" || printf "Vol: n/a"
+    return
+  fi
+  pct=$(awk -v v="$vol" 'BEGIN{printf("%d", v*100+0.5)}')
+  if [ -n "${mute:-}" ]; then
+    use_icons && printf "%s %s%%" "$(icon_spk_mute)" "$pct" || printf "Vol*: %s%%" "$pct"
   else
-    printf "B: %s%%" "$cap"
+    use_icons && printf "%s %s%%" "$(icon_spk)" "$pct" || printf "Vol: %s%%" "$pct"
   fi
 }
 
-wifi_ssid() {
-  # Return SSID if connected via Wi-Fi, else empty
-  local ssid=""
-  if command -v iwgetid >/dev/null 2>&1; then
-    ssid="$(iwgetid -r 2>/dev/null || true)"
+# -----------------------------
+# Battery (AC + level + icon)
+# -----------------------------
+battery_part() {
+  local dir ac cap stat online glyph
+  dir=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n1 || true)
+  ac=$(ls -d /sys/class/power_supply/AC* /sys/class/power_supply/ACAD* 2>/dev/null | head -n1 || true)
+  if [ -z "${dir:-}" ] || [ ! -r "$dir/capacity" ]; then
+    use_icons && printf " n/a" || printf "Bat: n/a"
+    return
   fi
-  if [ -z "$ssid" ] && command -v nmcli >/dev/null 2>&1; then
-    ssid="$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev status 2>/dev/null |
-      awk -F: '$2=="wifi" && $3=="connected"{print $4; exit}')"
-  fi
-  printf "%s" "$ssid"
-}
-
-wired_state() {
-  # Prefer en*; fall back to eth*. Return operstate (up/down/unknown)
-  shopt -s nullglob
-  local ifs=(/sys/class/net/en* /sys/class/net/eth*)
-  shopt -u nullglob
-  local i
-  for i in "${ifs[@]}"; do
-    [ -d "$i" ] || continue
-    local name="${i##*/}"
-    [ "$name" = "lo" ] && continue
-    if [ -f "$i/operstate" ]; then
-      cat "$i/operstate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-network() {
-  # 1) Wi-Fi SSID if connected
-  local ssid
-  ssid="$(wifi_ssid)"
-  if [ -n "$ssid" ]; then
-    if supports_icons; then
-      printf " %s" "$ssid"
-    else
-      printf "N: %s" "$ssid"
-    fi
-    return 0
-  fi
-
-  # 2) Wired operstate if present
-  local wstate=""
-  wstate="$(wired_state 2>/dev/null || true)"
-  if [ -n "$wstate" ]; then
-    if supports_icons; then
-      printf " %s" "$wstate"
-    else
-      printf "N: %s" "$wstate"
-    fi
-    return 0
-  fi
-
-  # 3) Otherwise offline
-  if supports_icons; then
-    printf " off"
+  cap=$(cat "$dir/capacity" 2>/dev/null || echo 0)
+  stat=$(cat "$dir/status" 2>/dev/null || echo Unknown)
+  if [ -n "${ac:-}" ] && [ -r "$ac/online" ]; then
+    online=$(cat "$ac/online" 2>/dev/null || echo 0)
   else
-    printf "N: offline"
+    online=0
+    [ "$stat" = "Charging" ] && online=1
+  fi
+  # Battery glyph by level
+  local lvl=$cap
+  if [ "$lvl" -ge 95 ]; then
+    glyph=''
+  elif [ "$lvl" -ge 75 ]; then
+    glyph=''
+  elif [ "$lvl" -ge 55 ]; then
+    glyph=''
+  elif [ "$lvl" -ge 35 ]; then
+    glyph=''
+  else glyph=''; fi
+
+  if [ "$online" = "1" ] || [ "$stat" = "Charging" ]; then
+    use_icons && printf "%s %s%%" "$(icon_plug)" "$cap" || printf "Bat+: %s%%" "$cap"
+  else
+    use_icons && printf "%s %s%%" "$glyph" "$cap" || printf "Bat: %s%%" "$cap"
   fi
 }
 
-# --- Nextcloud status (icon-first, text fallback) ---
-nc_status() {
-  # If client isn't installed, don't show anything
-  command -v nextcloud >/dev/null 2>&1 || return 0
-
-  # If process not running -> offline
-  if ! pgrep -x nextcloud >/dev/null 2>&1; then
-    if supports_icons; then printf " offline"; else printf "S: offline"; fi
-    return 0
+# -----------------------------
+# Wi-Fi SSID (iwgetid or nmcli)
+# -----------------------------
+ssid_part() {
+  local ssid forced=${DWM_STATUS_WIFI_CMD:-}
+  if [ "$forced" = "nmcli" ] && has_cmd nmcli; then
+    ssid=$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')
+  elif has_cmd iwgetid && { [ -z "${forced:-}" ] || [ "$forced" = "iwgetid" ]; }; then
+    ssid=$(iwgetid -r 2>/dev/null || true)
+  elif has_cmd nmcli; then
+    ssid=$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')
+  else
+    ssid="n/a"
   fi
+  ssid=${ssid:-n/a}
+  [ -z "$ssid" ] && ssid="n/a"
+  use_icons && printf "%s %s" "$(icon_wifi)" "$ssid" || printf "Net: %s" "$ssid"
+}
 
-  local any_sync=0 any_online=0
-  if command -v gdbus >/dev/null 2>&1; then
-    local objs
-    objs="$(gdbus call --session \
-      --dest com.nextcloudgmbh.Nextcloud \
-      --object-path /com/nextcloudgmbh/Nextcloud \
-      --method org.freedesktop.DBus.ObjectManager.GetManagedObjects 2>/dev/null)" || objs=""
-    if [ -n "$objs" ]; then
-      while IFS= read -r path; do
-        local v up
-        for prop in Status State Connected; do
-          v="$(gdbus call --session \
-            --dest com.nextcloudgmbh.Nextcloud \
-            --object-path "$path" \
-            --method org.freedesktop.DBus.Properties.Get \
-            org.freedesktop.CloudProvider1 "$prop" 2>/dev/null || true)"
-          [ -n "$v" ] && break
-        done
-        [ -z "$v" ] && continue
-        up="$(printf "%s" "$v" | tr '[:lower:]' '[:upper:]')"
-        if printf "%s" "$up" | grep -Eq "SYNC|BUSY|RUN|WORK|PROGRESS"; then
-          any_sync=1
-        elif printf "%s" "$up" | grep -Eq "OK|IDLE|READY|TRUE|ONLINE|CONNECTED"; then
-          any_online=1
+# -----------------------------
+# Internet (quick connectivity test)
+# -----------------------------
+net_online() {
+  local host=${DWM_STATUS_NET_PING:-1.1.1.1}
+  ping -n -q -W 1 -c 1 "$host" >/dev/null 2>&1
+}
+
+# -----------------------------
+# Nextcloud status (CLI → D-Bus → fallback)
+# -----------------------------
+nextcloud_part() {
+  local state="online"
+  if ! net_online; then
+    state="offline"
+  else
+    # Preferred: Nextcloud Desktop CLI status
+    if has_cmd nextcloud; then
+      local s
+      s=$(nextcloud --status 2>/dev/null || true)
+      if printf '%s' "$s" | grep -Eiq '(sync(ing)?|busy|indexing|scanning|transferring)'; then
+        state="syncing"
+      elif printf '%s' "$s" | grep -Eiq '(disconnected|offline)'; then
+        # Internet OK but client says offline → still present a sane "online"
+        state="online"
+      fi
+    else
+      # Heuristic: look for a Nextcloud D-Bus name and transfer hints
+      if has_cmd qdbus; then
+        if qdbus | grep -q "org.nextcloud"; then
+          local bus
+          bus=$(qdbus | grep org.nextcloud | head -n1 || true)
+          if [ -n "$bus" ]; then
+            if qdbus "$bus" 2>/dev/null | grep -iq "Transfer"; then
+              state="syncing"
+            fi
+          fi
         fi
-      done < <(printf "%s\n" "$objs" | sed -n "s/^\s*['\"]\([^'\"]\+\)['\"].*/\1/p")
+      fi
     fi
   fi
 
-  if [ "$any_sync" -eq 1 ]; then
-    if supports_icons; then printf " syncing"; else printf "S: syncing"; fi
-  elif [ "$any_online" -eq 1 ]; then
-    if supports_icons; then printf " online"; else printf "S: online"; fi
+  if use_icons; then
+    case "$state" in
+    offline) printf "%s offline" "$(icon_cloud_off)" ;;
+    syncing) printf "%s syncing" "$(icon_cloud_sync)" ;;
+    *) printf "%s online" "$(icon_cloud)" ;;
+    esac
   else
-    # Client running but status unknown -> treat as online (conservative)
-    if supports_icons; then printf " idle"; else printf "S: online"; fi
+    case "$state" in
+    offline) printf "NC: offline" ;;
+    syncing) printf "NC: syncing" ;;
+    *) printf "NC: online" ;;
+    esac
   fi
 }
 
-date_part() { date +'%Y-%m-%d w:%V'; }
-time_part() { date +'%H:%M'; }
+# -----------------------------
+# Date / Time
+# -----------------------------
+date_part() { date +"%Y-%m-%d w:%V"; }
+time_part() { date +"%H:%M"; }
 
+# -----------------------------
+# Compose the bar line
+# -----------------------------
 build_line() {
   local parts=()
-
-  local b
-  b="$(battery 2>/dev/null || true)"
-  [ -n "$b" ] && parts+=("$b")
-  local n
-  n="$(network 2>/dev/null || true)"
-  [ -n "$n" ] && parts+=("$n")
-  local s
-  s="$(nc_status 2>/dev/null || true)"
-  [ -n "$s" ] && parts+=("$s")
-
-  if supports_icons; then
-    parts+=(" $(date_part)" " $(time_part)")
-  else
-    parts+=("$(date_part)" "$(time_part)")
-  fi
+  parts+=("$(volume_part)") # volume left of battery as requested
+  parts+=("$(battery_part)")
+  parts+=("$(ssid_part)")
+  parts+=("$(nextcloud_part)")
+  parts+=("$(date_part)" "$(time_part)")
 
   local line="${parts[0]:-}"
-  if [ ${#parts[@]} -gt 1 ]; then
-    for p in "${parts[@]:1}"; do line+=" | $p"; done
-  fi
+  local i
+  for i in "${parts[@]:1}"; do
+    line+="$(icon_sep)${i}"
+  done
   printf "[ %s ]" "$line"
 }
 
-INTERVAL="${DWM_STATUS_INTERVAL:-10}"
+# -----------------------------
+# Main loop
+# -----------------------------
+INTERVAL=${DWM_STATUS_INTERVAL:-10}
 while :; do
   xsetroot -name "$(build_line)"
   sleep "$INTERVAL"
