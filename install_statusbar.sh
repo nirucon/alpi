@@ -228,11 +228,11 @@ battery_part() {
 ssid_part() {
   local ssid forced=${DWM_STATUS_WIFI_CMD:-}
   if [ "$forced" = "nmcli" ] && has_cmd nmcli; then
-    ssid=$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')
+    ssid=$(nmcli -t -f NAME,TYPE connection show --active | awk -F: '$2=="802-11-wireless"{print $1; exit}')
   elif has_cmd iwgetid && { [ -z "${forced:-}" ] || [ "$forced" = "iwgetid" ]; }; then
     ssid=$(iwgetid -r 2>/dev/null || true)
   elif has_cmd nmcli; then
-    ssid=$(nmcli -t -f ACTIVE,SSID dev wifi | awk -F: '$1=="yes"{print $2; exit}')
+    ssid=$(nmcli -t -f NAME,TYPE connection show --active | awk -F: '$2=="802-11-wireless"{print $1; exit}')
   else
     ssid="n/a"
   fi
