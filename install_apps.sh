@@ -101,6 +101,10 @@ PACMAN_PKGS_BASE=(
   btop               # sysinfo
   rofi               # launcher
   brightnessctl      # screen
+  noto-fonts-emoji
+  git
+  wireless_tools
+  iw
 
   # Neovim + tooling (LazyVim deps)
   neovim
@@ -109,9 +113,6 @@ PACMAN_PKGS_BASE=(
   lazygit            # TUI git client (optional but nice)
   python-pynvim      # python provider
   nodejs npm         # node provider (LSPs, formatters via Mason)
-  git
-  wireless_tools
-  iw
 )
 
 YAY_PKGS_BASE=(
