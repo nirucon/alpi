@@ -106,6 +106,13 @@ PACMAN_PKGS_BASE=(
   wireless_tools
   iw
   yazi
+  7zip
+  poppler
+  fd
+  ripgrep
+  zoxide
+  resvg
+  imagemagick
 
   # Neovim + tooling (LazyVim deps)
   neovim
