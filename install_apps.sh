@@ -113,6 +113,7 @@ PACMAN_PKGS_BASE=(
   zoxide
   resvg
   imagemagick
+  sxiv
 
   # Neovim + tooling (LazyVim deps)
   neovim
