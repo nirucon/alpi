@@ -105,6 +105,7 @@ PACMAN_PKGS_BASE=(
   git
   wireless_tools
   iw
+  yazi
 
   # Neovim + tooling (LazyVim deps)
   neovim
