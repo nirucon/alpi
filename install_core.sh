@@ -8,23 +8,34 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 # ───────── Pretty logging ─────────
-GRN="\033[1;32m"; BLU="\033[1;34m"; YLW="\033[1;33m"; RED="\033[1;31m"; NC="\033[0m"
-say()  { printf "${GRN}[CORE]${NC} %s\n" "$*"; }
+GRN="\033[1;32m"
+BLU="\033[1;34m"
+YLW="\033[1;33m"
+RED="\033[1;31m"
+NC="\033[0m"
+say() { printf "${GRN}[CORE]${NC} %s\n" "$*"; }
 step() { printf "${BLU}==>${NC} %s\n" "$*"; }
 warn() { printf "${YLW}[WARN]${NC} %s\n" "$*"; }
 fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
 trap 'fail "install_core.sh failed. See previous messages for details."' ERR
 
 # ───────── Safety ─────────
-[[ ${EUID:-$(id -u)} -ne 0 ]] || { fail "Do not run as root."; exit 1; }
-command -v sudo >/dev/null 2>&1 || { fail "sudo not found"; exit 1; }
+[[ ${EUID:-$(id -u)} -ne 0 ]] || {
+  fail "Do not run as root."
+  exit 1
+}
+command -v sudo >/dev/null 2>&1 || {
+  fail "sudo not found"
+  exit 1
+}
 
 # ───────── Flags ─────────
 DRY_RUN=0
-FULL_UPGRADE=1         # can be disabled with --no-upgrade
-ENABLE_SNAPSHOTS=1     # can be disabled with --no-snapshots
+FULL_UPGRADE=1     # can be disabled with --no-upgrade
+ENABLE_SNAPSHOTS=1 # can be disabled with --no-snapshots
 
-usage(){ cat <<'EOF'
+usage() {
+  cat <<'EOF'
 install_core.sh — options
   --no-upgrade      Skip pacman -Syu
   --no-snapshots    Skip Timeshift + autosnap hook
@@ -32,17 +43,33 @@ install_core.sh — options
   -h|--help         Show this help
 
 Design:
-• Installs base developer CLI, network, Xorg, audio, micro-utilities.
+- Installs base developer CLI, network, Xorg, audio, micro-utilities.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-upgrade)   FULL_UPGRADE=0; shift;;
-    --no-snapshots) ENABLE_SNAPSHOTS=0; shift;;
-    --dry-run)      DRY_RUN=1; shift;;
-    -h|--help)      usage; exit 0;;
-    *) warn "Unknown argument: $1"; usage; exit 1;;
+  --no-upgrade)
+    FULL_UPGRADE=0
+    shift
+    ;;
+  --no-snapshots)
+    ENABLE_SNAPSHOTS=0
+    shift
+    ;;
+  --dry-run)
+    DRY_RUN=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    warn "Unknown argument: $1"
+    usage
+    exit 1
+    ;;
   esac
 done
 
@@ -62,7 +89,7 @@ run() {
 }
 
 # ───────── Timeshift ─────────
-if (( ENABLE_SNAPSHOTS==1 )); then
+if ((ENABLE_SNAPSHOTS == 1)); then
   step "Installing timeshift"
   run sudo pacman -S --needed --noconfirm timeshift
 else
@@ -70,7 +97,7 @@ else
 fi
 
 # ───────── System upgrade (optional) ─────────
-if (( FULL_UPGRADE==1 )); then
+if ((FULL_UPGRADE == 1)); then
   step "Syncing & upgrading system"
   run "sudo pacman -Syu --noconfirm"
 else
@@ -78,7 +105,7 @@ else
 fi
 
 # ───────── Ensure ~/.local/bin exists ─────────
-ensure_home_bin(){ mkdir -p "$HOME/.local/bin"; }
+ensure_home_bin() { mkdir -p "$HOME/.local/bin"; }
 ensure_home_bin
 
 # ───────── Core package set ─────────
@@ -129,9 +156,9 @@ cat <<'EOT'
 ========================================================
 Core setup complete
 
-• System upgraded (unless --no-upgrade)
-• Timeshift installed (autosnap if yay exists)
-• Base CLI, Xorg, audio, network installed
-• NetworkManager and ufw enabled
+- System upgraded (unless --no-upgrade)
+- Timeshift installed (autosnap if yay exists)
+- Base CLI, Xorg, audio, network installed
+- NetworkManager and ufw enabled
 ========================================================
 EOT

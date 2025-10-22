@@ -1,0 +1,140 @@
+# apps-pacman.txt
+# Official Arch repository packages
+# 
+# Format: one package per line
+# Lines starting with # are comments
+# Everything after the first word is ignored (you can add comments inline)
+#
+# To add a package: just add a new line with the package name
+# To disable a package: add # at the start of the line
+#
+# Example:
+#   firefox          # web browser
+#   # chromium       # disabled for now
+
+# ============================================================
+# Desktop Utilities
+# ============================================================
+nitrogen           # wallpaper manager
+arandr             # display layout GUI
+pcmanfm            # lightweight file manager
+gvfs               # virtual filesystem (needed for automount in pcmanfm)
+gvfs-mtp           # MTP device support (Android phones)
+gvfs-gphoto2       # camera support
+gvfs-afc           # iOS device support
+udisks2            # disk management backend
+udiskie            # automount helper (optional tray)
+
+# ============================================================
+# Compositor & Window Management
+# ============================================================
+picom              # compositor (transparency, shadows, no tearing)
+
+# ============================================================
+# Application Launcher & Menus
+# ============================================================
+rofi               # application launcher & dmenu replacement
+
+# ============================================================
+# Screenshots & Screen Tools
+# ============================================================
+flameshot          # screenshot tool with annotation
+maim               # simple screenshot utility
+slop               # select screen region
+
+# ============================================================
+# Terminals
+# ============================================================
+alacritty          # GPU-accelerated terminal emulator
+
+# ============================================================
+# Notifications
+# ============================================================
+dunst              # notification daemon
+libnotify          # notification library (for notify-send)
+
+# ============================================================
+# Theming & Appearance
+# ============================================================
+lxappearance       # GTK theme switcher
+materia-gtk-theme  # material design GTK theme
+papirus-icon-theme # icon theme
+adwaita-qt         # Adwaita theme for Qt apps
+qt5ct              # Qt5 configuration tool
+kvantum-qt5        # SVG-based Qt5 theme engine
+qt5-base           # Qt5 base libraries
+qt6ct              # Qt6 configuration tool
+kvantum-qt6        # SVG-based Qt6 theme engine
+qt6-base           # Qt6 base libraries
+kvantum-theme-adwaita  # Adwaita theme for Kvantum
+
+# ============================================================
+# Fonts
+# ============================================================
+noto-fonts-emoji   # emoji support
+
+# ============================================================
+# Media & Graphics
+# ============================================================
+mpv                # video player
+cmus               # terminal music player
+cava               # audio visualizer
+gimp               # image editor
+sxiv               # simple image viewer
+imagemagick        # image manipulation CLI tools
+resvg              # SVG rendering library
+
+# ============================================================
+# File Tools
+# ============================================================
+7zip               # archive manager
+poppler            # PDF rendering library
+yazi               # terminal file manager
+
+# ============================================================
+# System Monitoring
+# ============================================================
+btop               # resource monitor
+fastfetch          # system info display
+
+# ============================================================
+# Networking
+# ============================================================
+wireless_tools     # wireless network tools (iwconfig, iwgetid)
+iw                 # nl80211 wireless configuration
+
+# ============================================================
+# Clipboard & Utilities
+# ============================================================
+xclip              # clipboard CLI tool
+brightnessctl      # screen brightness control
+
+# ============================================================
+# Cloud & Sync
+# ============================================================
+nextcloud-client   # Nextcloud desktop client
+
+# ============================================================
+# Development Tools
+# ============================================================
+git                # version control
+neovim             # text editor
+lazygit            # TUI for git
+ripgrep            # fast grep alternative (needed for Neovim Telescope)
+fd                 # fast find alternative
+fzf                # fuzzy finder
+jq                 # JSON processor
+zoxide             # smart cd command
+
+# ============================================================
+# Neovim / LazyVim Dependencies
+# ============================================================
+python-pynvim      # Python provider for Neovim
+nodejs             # JavaScript runtime
+npm                # Node package manager
+
+# ============================================================
+# GTK Libraries
+# ============================================================
+gtk3               # GTK3 library
+gtk4               # GTK4 library

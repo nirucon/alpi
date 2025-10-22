@@ -1,0 +1,54 @@
+# apps-aur.txt
+# AUR (Arch User Repository) packages
+#
+# Format: one package per line
+# Lines starting with # are comments
+# Everything after the first word is ignored (you can add comments inline)
+#
+# Note: These packages are built from source via yay
+# Installation may take longer than official repo packages
+#
+# To add a package: just add a new line with the package name
+# To disable a package: add # at the start of the line
+
+# ============================================================
+# Fonts
+# ============================================================
+ttf-jetbrains-mono-nerd  # JetBrains Mono with Nerd Font icons (programming font)
+
+# ============================================================
+# Web Browsers
+# ============================================================
+brave-bin                # privacy-focused browser (binary package, faster install)
+
+# ============================================================
+# Media
+# ============================================================
+spotify                  # music streaming client
+
+# ============================================================
+# Security & Screen Lock
+# ============================================================
+xautolock                # automatic screen locker on idle
+
+# ============================================================
+# System Tools
+# ============================================================
+timeshift-autosnap       # automatic Timeshift snapshots before pacman transactions
+
+# ============================================================
+# File Sharing
+# ============================================================
+localsend-bin            # local network file sharing (binary package)
+
+# ============================================================
+# Add your own packages below
+# ============================================================
+
+# Example packages you might want (uncomment to enable):
+# discord                # voice/chat client
+# visual-studio-code-bin # VS Code editor
+# dropbox                # cloud storage
+# slack-desktop          # team communication
+# zoom                   # video conferencing
+# bitwarden              # password manager

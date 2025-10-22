@@ -4,62 +4,117 @@
 # Pulls look&feel assets from a Git repo (default: nirucon/suckless_lookandfeel)
 # and installs them into sensible locations under $HOME.
 #
+# Changes in this version:
+# - .xinitrc and .bash_profile are PROTECTED (never overwrite)
+# - .bashrc and .bash_aliases CAN be installed from repo (with timestamped backup)
+# - Creates xinitrc hooks instead of modifying .xinitrc directly
+# - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
+#
 # Design:
 # - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
 # - Copy from that repo (NOT from the alpi repo root)
 # - Timestamped backups for existing files
 # - Skip missing optional files gracefully
-# - Make installed *.sh executable (755) in ~/.local/bin if present inside the L&F repo
+# - Make installed *.sh executable (755) in ~/.local/bin
 #
 # Flags:
 #   --repo URL         (default: https://github.com/nirucon/suckless_lookandfeel)
 #   --branch NAME      (default: main)
 #   --dry-run          (no changes, show actions)
 #   --help             Show help
-#
-# Examples:
-#   ./install_lookandfeel.sh
-#   ./install_lookandfeel.sh --repo https://github.com/nirucon/suckless_lookandfeel --branch main
 
 set -Eeuo pipefail
 shopt -s nullglob dotglob
 
-# ---------- defaults ----------
+# ───────── Defaults ─────────
 REPO_URL="https://github.com/nirucon/suckless_lookandfeel"
 BRANCH="main"
 DRY_RUN=0
 
-# ---------- logging ----------
-ts()   { date +"%Y-%m-%d %H:%M:%S"; }
-log()  { printf "[%s] %s\n" "$(ts)" "$*"; }
-ok()   { printf "\e[32m[%s] %s\e[0m\n" "$(ts)" "$*"; }
-warn() { printf "\e[33m[%s] %s\e[0m\n" "$(ts)" "$*"; }
-err()  { printf "\e[31m[%s] %s\e[0m\n" "$(ts)" "$*"; }
-die()  { err "$@"; exit 1; }
-
-usage() {
-  sed -n '1,80p' "$0" | sed 's/^# \{0,1\}//'
+# ───────── Logging ─────────
+ts() { date +"%Y-%m-%d %H:%M:%S"; }
+log() { printf "[%s] %s\n" "$(ts)" "$*"; }
+ok() { printf "\e[32m[%s] ✓ %s\e[0m\n" "$(ts)" "$*"; }
+warn() { printf "\e[33m[%s] ⚠ %s\e[0m\n" "$(ts)" "$*"; }
+err() { printf "\e[31m[%s] ✗ %s\e[0m\n" "$(ts)" "$*"; }
+die() {
+  err "$@"
+  exit 1
 }
 
-while (( $# )); do
+usage() {
+  cat <<'EOF'
+install_lookandfeel.sh — Install configs, themes, and scripts
+
+USAGE:
+  ./install_lookandfeel.sh [options]
+
+OPTIONS:
+  --repo URL         Git repository URL (default: nirucon/suckless_lookandfeel)
+  --branch NAME      Branch to checkout (default: main)
+  --dry-run          Preview actions without making changes
+  --help             Show this help
+
+DESIGN:
+  • Clones repo to ~/.cache/alpi/lookandfeel/<branch>
+  • Installs ALL .sh scripts from scripts/ to ~/.local/bin/
+  • Copies config files to ~/.config/
+  • Installs dotfiles (.bashrc, .bash_aliases, etc.) with backup
+  • Creates xinitrc hooks (does NOT modify .xinitrc)
+  
+PROTECTED FILES (never overwritten):
+  • .xinitrc         (managed by install_suckless.sh)
+  • .bash_profile    (managed by install_apps.sh)
+  
+INSTALLABLE WITH BACKUP:
+  • .bashrc          (your custom shell config)
+  • .bash_aliases    (your aliases and functions)
+  • .Xresources      (X11 settings)
+  • .inputrc         (readline config)
+
+EXAMPLES:
+  ./install_lookandfeel.sh
+  ./install_lookandfeel.sh --branch dev --dry-run
+EOF
+}
+
+while (($#)); do
   case "$1" in
-    --repo)   shift; [[ $# -gt 0 ]] || die "--repo requires a URL"; REPO_URL="$1"; shift ;;
-    --branch) shift; [[ $# -gt 0 ]] || die "--branch requires a name"; BRANCH="$1"; shift ;;
-    --dry-run) DRY_RUN=1; shift ;;
-    --help|-h) usage; exit 0 ;;
-    *) die "Unknown argument: $1 (use --help)";;
+  --repo)
+    shift
+    [[ $# -gt 0 ]] || die "--repo requires a URL"
+    REPO_URL="$1"
+    shift
+    ;;
+  --branch)
+    shift
+    [[ $# -gt 0 ]] || die "--branch requires a name"
+    BRANCH="$1"
+    shift
+    ;;
+  --dry-run)
+    DRY_RUN=1
+    shift
+    ;;
+  --help | -h)
+    usage
+    exit 0
+    ;;
+  *) die "Unknown argument: $1 (use --help)" ;;
   esac
 done
 
-# ---------- where to cache ----------
+# ───────── Where to cache ─────────
 CACHE_BASE="${XDG_CACHE_HOME:-$HOME/.cache}/alpi/lookandfeel"
 DEST_DIR="$CACHE_BASE/$BRANCH"
-mkdir -p -- "$CACHE_BASE"
+XINITRC_HOOKS="$HOME/.config/xinitrc.d"
 
-# ---------- clone/update ----------
+mkdir -p -- "$CACHE_BASE" "$XINITRC_HOOKS"
+
+# ───────── Clone/update repo ─────────
 if [[ -d "$DEST_DIR/.git" ]]; then
   log "Updating look&feel repo at: $DEST_DIR"
-  if (( DRY_RUN == 0 )); then
+  if ((DRY_RUN == 0)); then
     git -C "$DEST_DIR" fetch --all --prune
     git -C "$DEST_DIR" checkout "$BRANCH"
     git -C "$DEST_DIR" reset --hard "origin/$BRANCH"
@@ -68,7 +123,7 @@ if [[ -d "$DEST_DIR/.git" ]]; then
   fi
 else
   log "Cloning look&feel repo -> $DEST_DIR"
-  if (( DRY_RUN == 0 )); then
+  if ((DRY_RUN == 0)); then
     git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$DEST_DIR"
   else
     log "(dry-run) git clone --depth 1 --branch \"$BRANCH\" \"$REPO_URL\" \"$DEST_DIR\""
@@ -77,20 +132,25 @@ fi
 
 log "Using source tree: $DEST_DIR (branch=$BRANCH)"
 
-# ---------- helpers ----------
+# ───────── Helpers ─────────
 backup_then_install_file() {
   local src="$1" dst="$2" mode="$3"
-  local dst_dir; dst_dir="$(dirname -- "$dst")"
-  [[ -f "$src" ]] || { warn "Missing source (skipping): $src"; return 0; }
+  local dst_dir
+  dst_dir="$(dirname -- "$dst")"
+  [[ -f "$src" ]] || {
+    warn "Missing source (skipping): $src"
+    return 0
+  }
 
-  if (( DRY_RUN == 1 )); then
+  if ((DRY_RUN == 1)); then
     log "(dry-run) install $src -> $dst (mode $mode)"
     return 0
   fi
 
   mkdir -p -- "$dst_dir"
   if [[ -e "$dst" ]]; then
-    local ts; ts="$(date +%Y%m%d_%H%M%S)"
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
     cp -a -- "$dst" "${dst}.bak.${ts}"
     log "Backup: $dst -> ${dst}.bak.${ts}"
   fi
@@ -100,10 +160,16 @@ backup_then_install_file() {
 
 install_sh_to_local_bin() {
   local from_dir="$1"
-  local files=( "$from_dir"/*.sh )
-  (( ${#files[@]} )) || { log "No *.sh in $from_dir (skipping)."; return 0; }
+  local files=("$from_dir"/*.sh)
+  ((${#files[@]})) || {
+    log "No *.sh in $from_dir (skipping)."
+    return 0
+  }
+
   mkdir -p -- "$HOME/.local/bin"
   chmod u+rwx "$HOME/.local/bin"
+
+  log "Installing scripts from $from_dir to ~/.local/bin/"
   for f in "${files[@]}"; do
     backup_then_install_file "$f" "$HOME/.local/bin/$(basename -- "$f")" 755
   done
@@ -111,8 +177,12 @@ install_sh_to_local_bin() {
 
 mirror_dir_into_config() {
   local base_dir="$1"
-  [[ -d "$base_dir" ]] || { log "No directory: $base_dir (skipping)."; return 0; }
+  [[ -d "$base_dir" ]] || {
+    log "No directory: $base_dir (skipping)."
+    return 0
+  }
 
+  log "Mirroring $base_dir -> ~/.config/"
   while IFS= read -r -d '' src; do
     local rel="${src#$base_dir/}"
     local dst="$HOME/.config/$rel"
@@ -120,14 +190,29 @@ mirror_dir_into_config() {
   done < <(find "$base_dir" -type f -print0)
 }
 
-# ---------- install from the L&F repo ----------
+# ───────── Protected files (managed by other scripts) ─────────
+# .xinitrc is managed by install_suckless.sh (creates minimal template with hooks)
+# .bash_profile is managed by install_apps.sh (adds PATH and EDITOR exports)
+# .bashrc and .bash_aliases CAN come from lookandfeel repo (for nirucon users)
+PROTECTED_FILES=(.xinitrc .bash_profile)
+
+is_protected() {
+  local filename="$1"
+  for protected in "${PROTECTED_FILES[@]}"; do
+    [[ "$filename" == "$protected" ]] && return 0
+  done
+  return 1
+}
+
+# ───────── Install from the look&feel repo ─────────
 log "==> Installing from look&feel repository"
 
-# 1) Scripts inside the look&feel repo (optional)
+# 1) Scripts from repo's scripts/ or bin/ folders
+# ALL .sh files are installed automatically to ~/.local/bin/
 [[ -d "$DEST_DIR/scripts" ]] && install_sh_to_local_bin "$DEST_DIR/scripts"
-[[ -d "$DEST_DIR/bin"     ]] && install_sh_to_local_bin "$DEST_DIR/bin"
+[[ -d "$DEST_DIR/bin" ]] && install_sh_to_local_bin "$DEST_DIR/bin"
 
-# 2) Well-known single-file configs at repo root (optional; adjust if your repo differs)
+# 2) Well-known single-file configs at repo root (optional)
 declare -A SPECIAL_MAP=(
   ["$DEST_DIR/picom.conf"]="$HOME/.config/picom/picom.conf"
   ["$DEST_DIR/alacritty.toml"]="$HOME/.config/alacritty/alacritty.toml"
@@ -135,6 +220,7 @@ declare -A SPECIAL_MAP=(
   ["$DEST_DIR/Black-Metal.rasi"]="$HOME/.local/share/rofi/themes/Black-Metal.rasi"
   ["$DEST_DIR/config.rasi"]="$HOME/.config/rofi/config.rasi"
 )
+
 for src in "${!SPECIAL_MAP[@]}"; do
   dst="${SPECIAL_MAP[$src]}"
   [[ -f "$src" ]] && backup_then_install_file "$src" "$dst" 644 || log "Not found (optional): $src"
@@ -144,27 +230,139 @@ done
 mirror_dir_into_config "$DEST_DIR/config"
 mirror_dir_into_config "$DEST_DIR/.config"
 
-# 4) Copy dotfiles from L&F repo root into $HOME (optional)
+# 4) Copy dotfiles from look&feel repo root into $HOME
+log "Processing dotfiles from repo root..."
 for df in "$DEST_DIR"/.*; do
   base="$(basename -- "$df")"
   [[ -f "$df" ]] || continue
   [[ "$base" == "." || "$base" == ".." || "$base" =~ ^\.git ]] && continue
+
+  # Check if protected (only .xinitrc and .bash_profile)
+  if is_protected "$base"; then
+    if [[ -f "$HOME/$base" ]]; then
+      warn "Protected file exists: $base (managed by other install scripts)"
+      warn "Skipping to avoid conflicts. To merge manually:"
+      warn "  diff $HOME/$base $df"
+      continue
+    fi
+  fi
+
+  # Install dotfiles with backup (including .bashrc and .bash_aliases)
   case "$base" in
-    .bashrc|.zshrc|.bash_aliases|.inputrc|.Xresources|.xinitrc|.profile)
-      backup_then_install_file "$df" "$HOME/$base" 644
-      ;;
-    *) : ;;
+  .bashrc)
+    log "Installing .bashrc from lookandfeel repo (backup created if exists)"
+    backup_then_install_file "$df" "$HOME/$base" 644
+    ;;
+  .bash_aliases)
+    log "Installing .bash_aliases from lookandfeel repo (backup created if exists)"
+    backup_then_install_file "$df" "$HOME/$base" 644
+    ;;
+  .zshrc | .inputrc | .Xresources | .profile)
+    backup_then_install_file "$df" "$HOME/$base" 644
+    ;;
+  *)
+    log "Skipping unknown dotfile: $base"
+    ;;
   esac
 done
 
-# 5) PATH notice
+# 5) Create xinitrc hooks for autostart programs
+log "Creating xinitrc hooks in ~/.config/xinitrc.d/"
+
+# Hook for compositor
+cat >"$XINITRC_HOOKS/10-compositor.sh" <<'EOF'
+#!/bin/sh
+# Compositor hook (picom)
+# Created by install_lookandfeel.sh
+
+command -v picom >/dev/null 2>&1 && picom &
+EOF
+chmod +x "$XINITRC_HOOKS/10-compositor.sh"
+
+# Hook for wallpaper
+cat >"$XINITRC_HOOKS/20-wallpaper.sh" <<'EOF'
+#!/bin/sh
+# Wallpaper hook (nitrogen + wallrotate)
+# Created by install_lookandfeel.sh
+
+# Restore last wallpaper
+command -v nitrogen >/dev/null 2>&1 && nitrogen --restore &
+
+# Wallpaper rotation script (if installed)
+[ -x "$HOME/.local/bin/wallrotate.sh" ] && "$HOME/.local/bin/wallrotate.sh" &
+EOF
+chmod +x "$XINITRC_HOOKS/20-wallpaper.sh"
+
+# Hook for notifications
+cat >"$XINITRC_HOOKS/25-notifications.sh" <<'EOF'
+#!/bin/sh
+# Notification daemon hook (dunst)
+# Created by install_lookandfeel.sh
+
+command -v dunst >/dev/null 2>&1 && dunst &
+EOF
+chmod +x "$XINITRC_HOOKS/25-notifications.sh"
+
+# Hook for cloud sync
+cat >"$XINITRC_HOOKS/50-nextcloud.sh" <<'EOF'
+#!/bin/sh
+# Cloud sync hook (Nextcloud)
+# Created by install_lookandfeel.sh
+
+command -v nextcloud >/dev/null 2>&1 && nextcloud --background &
+EOF
+chmod +x "$XINITRC_HOOKS/50-nextcloud.sh"
+
+# Hook for polkit agent
+cat >"$XINITRC_HOOKS/60-polkit.sh" <<'EOF'
+#!/bin/sh
+# Polkit authentication agent hook
+# Created by install_lookandfeel.sh
+
+if command -v /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 >/dev/null 2>&1; then
+  /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
+fi
+EOF
+chmod +x "$XINITRC_HOOKS/60-polkit.sh"
+
+ok "Created xinitrc hooks (these will be sourced by ~/.xinitrc)"
+
+# 6) PATH notice
 case ":$PATH:" in
-  *":$HOME/.local/bin:"*) : ;;
-  *)
-    warn "~/.local/bin is not in your PATH."
-    warn "Add this line to your shell profile (e.g., ~/.bashrc or ~/.zshrc):"
-    echo '  export PATH="$HOME/.local/bin:$PATH"'
-    ;;
+*":$HOME/.local/bin:"*) : ;;
+*)
+  warn "~/.local/bin is not in your PATH."
+  warn "Add this line to your shell profile (e.g., ~/.bashrc or ~/.zshrc):"
+  echo '  export PATH="$HOME/.local/bin:$PATH"'
+  warn "Or log out and back in (install_apps.sh should have added it to ~/.bash_profile)"
+  ;;
 esac
 
-ok "Done! Look&feel files have been installed from $REPO_URL (branch: $BRANCH)."
+cat <<EOT
+========================================================
+Look&feel installation complete
+
+- Scripts installed from repo to ~/.local/bin/
+  (ALL .sh files from scripts/ folder are now executable)
+- Config files synced to ~/.config/
+- Dotfiles installed with timestamped backups:
+  - .bashrc (from lookandfeel repo)
+  - .bash_aliases (from lookandfeel repo)
+  - .Xresources, .inputrc, etc.
+- Xinitrc hooks created in ~/.config/xinitrc.d/
+- Protected files (.xinitrc, .bash_profile) were not modified
+
+Repository: $REPO_URL (branch: $BRANCH)
+Local cache: $DEST_DIR
+
+Your old dotfiles are backed up as:
+  ~/.bashrc.bak.YYYYMMDD_HHMMSS
+  ~/.bash_aliases.bak.YYYYMMDD_HHMMSS
+
+To update in the future:
+  ./alpi.sh --only lookandfeel
+  
+To restore old dotfiles:
+  mv ~/.bashrc.bak.YYYYMMDD_HHMMSS ~/.bashrc
+========================================================
+EOT
