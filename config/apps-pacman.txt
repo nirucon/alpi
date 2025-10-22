@@ -59,14 +59,11 @@ libnotify          # notification library (for notify-send)
 lxappearance       # GTK theme switcher
 materia-gtk-theme  # material design GTK theme
 papirus-icon-theme # icon theme
-adwaita-qt         # Adwaita theme for Qt apps
 qt5ct              # Qt5 configuration tool
 kvantum-qt5        # SVG-based Qt5 theme engine
 qt5-base           # Qt5 base libraries
 qt6ct              # Qt6 configuration tool
-kvantum-qt6        # SVG-based Qt6 theme engine
 qt6-base           # Qt6 base libraries
-kvantum-theme-adwaita  # Adwaita theme for Kvantum
 
 # ============================================================
 # Fonts
