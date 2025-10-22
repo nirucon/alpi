@@ -114,6 +114,16 @@ PACMAN_PKGS_BASE=(
   resvg
   imagemagick
   sxiv
+  gtk3
+  gtk4
+  adwaita-qt
+  qt5ct
+  kvantum-qt5
+  qt5-base
+  qt6ct
+  kvantum-qt6
+  qt6-base
+  kvantum-theme-adwaita
 
   # Neovim + tooling (LazyVim deps)
   neovim
