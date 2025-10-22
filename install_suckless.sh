@@ -263,6 +263,15 @@ if command -v /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 >/dev/nu
   /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
 fi
 
+# 2.1 Theming
+# Dark mode (GTK + Qt)
+export XDG_CONFIG_HOME="$HOME/.config"
+export GTK_THEME="Adwaita:dark"
+export QT_STYLE_OVERRIDE="kvantum"
+export QT_QPA_PLATFORMTHEME="qt5ct"
+export XCURSOR_THEME="Adwaita"
+export GTK2_RC_FILES="$HOME/.gtkrc-2.0"
+
 #----------------------------------------------#
 # 3) Clean teardown & robust DWM launch loop   #
 #----------------------------------------------#
