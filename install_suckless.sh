@@ -8,6 +8,7 @@
 # - Creates minimal .xinitrc template ONCE (never modified after creation)
 # - Uses hook system (~/.config/xinitrc.d/) instead of appending to .xinitrc
 # - No conflicts with install_lookandfeel.sh
+# - FIXED: Always ensures xinitrc.d directory exists
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -23,6 +24,7 @@ say() { printf "${MAG}[SUCK]${NC} %s\n" "$*"; }
 step() { printf "${BLU}==>${NC} %s\n" "$*"; }
 warn() { printf "${YLW}[WARN]${NC} %s\n" "$*"; }
 fail() { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
+ok() { printf "${GRN}[OK]${NC} %s\n" "$*"; }
 trap 'fail "install_suckless.sh failed. See previous messages for details."' ERR
 
 # ───────── Safety ─────────
@@ -148,7 +150,7 @@ fi
 
 # ───────── Helpers (array-safe) ─────────
 ts() { date +"%Y%m%d-%H%M%S"; }
-ensure_dir() { mkdir -p "$1"; }
+ensure_dir() { mkdir -p "$@"; }
 run() { if [[ $DRY_RUN -eq 1 ]]; then say "[dry-run] $*"; else "$@"; fi; }
 backup_if_exists() {
   local f="$1"
@@ -255,6 +257,10 @@ done
 
 # ───────── .xinitrc creation (ONCE, minimal template) ─────────
 if [[ $MANAGE_XINIT -eq 1 ]]; then
+  # CRITICAL FIX: Always ensure hooks directory exists, even if .xinitrc exists
+  step "Ensuring xinitrc hooks directory exists"
+  ensure_dir "$XINITRC_HOOKS"
+  
   if [[ ! -f "$XINIT" ]]; then
     step "Creating minimal ~/.xinitrc with hook system"
     cat >"$XINIT" <<'EOF'
@@ -350,6 +356,7 @@ if command -v xautolock >/dev/null 2>&1 && command -v slock >/dev/null 2>&1; the
 fi
 EOF
   chmod +x "$XINITRC_HOOKS/40-suckless.sh"
+  ok "Created xinitrc hook: ~/.config/xinitrc.d/40-suckless.sh"
 
 else
   warn "--no-xinit set: leaving ~/.xinitrc untouched"
