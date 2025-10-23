@@ -52,3 +52,4 @@ localsend-bin            # local network file sharing (binary package)
 # slack-desktop          # team communication
 # zoom                   # video conferencing
 # bitwarden              # password manager
+vscodium-bin             # dev
