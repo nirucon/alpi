@@ -9,7 +9,7 @@
 # - .bashrc and .bash_aliases CAN be installed from repo (with timestamped backup)
 # - Creates xinitrc hooks instead of modifying .xinitrc directly
 # - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
-# - Downloads wallpapers from https://n.rudolfsson.net/dl/wallpapers to ~/Pictures/Wallpapers
+# - Downloads wallpapers.zip and extracts to ~/Pictures/Wallpapers
 # - Fixed error handling to not exit prematurely
 #
 # Design:
@@ -18,7 +18,7 @@
 # - Timestamped backups for existing files
 # - Skip missing optional files gracefully
 # - Make installed *.sh executable (755) in ~/.local/bin
-# - Download all numbered wallpapers (1.jpg, 2.png, etc.)
+# - Download and extract wallpapers.zip
 #
 # Flags:
 #   --repo URL         (default: https://github.com/nirucon/suckless_lookandfeel)
@@ -33,7 +33,7 @@ shopt -s nullglob dotglob
 REPO_URL="https://github.com/nirucon/suckless_lookandfeel"
 BRANCH="main"
 DRY_RUN=0
-WALLPAPER_URL="https://n.rudolfsson.net/dl/wallpapers"
+WALLPAPER_URL="https://n.rudolfsson.net/dl/wallpapers.zip"
 WALLPAPER_DIR="$HOME/Pictures/Wallpapers"
 
 # ───────── Logging ─────────
@@ -66,7 +66,7 @@ DESIGN:
   • Copies config files to ~/.config/
   • Installs dotfiles (.bashrc, .bash_aliases, etc.) with backup
   • Creates xinitrc hooks (does NOT modify .xinitrc)
-  • Downloads wallpapers to ~/Pictures/Wallpapers
+  • Downloads and extracts wallpapers.zip to ~/Pictures/Wallpapers
   
 PROTECTED FILES (never overwritten):
   • .xinitrc         (managed by install_suckless.sh)
@@ -196,8 +196,8 @@ mirror_dir_into_config() {
   done < <(find "$base_dir" -type f -print0)
 }
 
-# ───────── Wallpaper download ─────────
-download_wallpapers() {
+# ───────── Wallpaper download and extraction ─────────
+download_and_extract_wallpapers() {
   # Disable exit on error for this function
   set +e
   
@@ -208,7 +208,8 @@ download_wallpapers() {
 
   if ((DRY_RUN == 1)); then
     log "(dry-run) Would create directory: $dest"
-    log "(dry-run) Would download wallpapers from: $url"
+    log "(dry-run) Would download wallpapers.zip from: $url"
+    log "(dry-run) Would extract to: $dest"
     set -e
     return 0
   fi
@@ -225,7 +226,14 @@ download_wallpapers() {
     return 1
   fi
 
-  # Determine which tool to use
+  if ! command -v unzip >/dev/null 2>&1; then
+    warn "unzip not found. Skipping wallpaper extraction."
+    warn "Install unzip to enable wallpaper extraction."
+    set -e
+    return 1
+  fi
+
+  # Determine which download tool to use
   local download_tool=""
   if command -v wget >/dev/null 2>&1; then
     download_tool="wget"
@@ -234,117 +242,60 @@ download_wallpapers() {
   fi
 
   log "Using $download_tool for downloads"
-  log "Scanning for numbered wallpapers (1.jpg, 2.png, etc.)..."
-  echo ""
   
-  local count=0
-  local skipped=0
-  local stop_count=0
-  local extensions=("jpg" "jpeg" "png" "webp")
-  local max_attempts=200
+  # Temporary file for the zip
+  local temp_zip="$CACHE_BASE/wallpapers.zip"
   
-  # Try numbered patterns using C-style for loop
-  local i
-  for ((i=1; i<=max_attempts; i++)); do
-    local found=0
-    
-    # Try each extension for this number
-    local ext
-    for ext in "${extensions[@]}"; do
-      local img_url="$url/$i.$ext"
-      local img_file="$dest/$i.$ext"
-      
-      # Skip if already exists
-      if [[ -f "$img_file" ]]; then
-        log "  [$i.$ext] Already exists, skipping"
-        skipped=$((skipped + 1))
-        found=1
-        break
-      fi
-      
-      # Try to download
-      if [[ "$download_tool" == "wget" ]]; then
-        # Check if file exists on server (HEAD request)
-        if wget -q --spider "$img_url" 2>/dev/null; then
-          # File exists, download it
-          log "  [$i.$ext] Downloading..."
-          if wget -q -O "$img_file" "$img_url" 2>/dev/null; then
-            # Verify download succeeded and file is not empty
-            if [[ -s "$img_file" ]]; then
-              ok "  [$i.$ext] Downloaded successfully"
-              count=$((count + 1))
-              found=1
-              break
-            else
-              warn "  [$i.$ext] Downloaded but file is empty, removing"
-              rm -f "$img_file" 2>/dev/null || true
-            fi
-          else
-            warn "  [$i.$ext] Download failed"
-            rm -f "$img_file" 2>/dev/null || true
-          fi
-        fi
-      else
-        # curl approach
-        if curl -s -f -I "$img_url" >/dev/null 2>&1; then
-          # File exists, download it
-          log "  [$i.$ext] Downloading..."
-          if curl -s -f -o "$img_file" "$img_url" 2>/dev/null; then
-            # Verify download succeeded and file is not empty
-            if [[ -s "$img_file" ]]; then
-              ok "  [$i.$ext] Downloaded successfully"
-              count=$((count + 1))
-              found=1
-              break
-            else
-              warn "  [$i.$ext] Downloaded but file is empty, removing"
-              rm -f "$img_file" 2>/dev/null || true
-            fi
-          else
-            warn "  [$i.$ext] Download failed"
-            rm -f "$img_file" 2>/dev/null || true
-          fi
-        fi
-      fi
-    done
-    
-    # Count consecutive misses
-    if ((found == 0)); then
-      stop_count=$((stop_count + 1))
-      # Stop after 20 consecutive misses
-      if ((stop_count >= 20)); then
-        log "No wallpapers found for 20 consecutive numbers, stopping scan at number $i"
-        break
-      fi
+  # Download the zip file
+  log "Downloading wallpapers.zip..."
+  if [[ "$download_tool" == "wget" ]]; then
+    if wget -q -O "$temp_zip" "$url" 2>/dev/null; then
+      ok "Downloaded wallpapers.zip successfully"
     else
-      # Reset counter when we find something
-      stop_count=0
+      err "Failed to download wallpapers.zip"
+      rm -f "$temp_zip" 2>/dev/null || true
+      set -e
+      return 1
     fi
-  done
-
-  echo ""  # Blank line for readability
-  
-  # Summary
-  if ((count > 0)); then
-    ok "Downloaded $count new wallpaper(s) to $dest"
+  else
+    # curl approach
+    if curl -s -f -o "$temp_zip" "$url" 2>/dev/null; then
+      ok "Downloaded wallpapers.zip successfully"
+    else
+      err "Failed to download wallpapers.zip"
+      rm -f "$temp_zip" 2>/dev/null || true
+      set -e
+      return 1
+    fi
   fi
-  
-  if ((skipped > 0)); then
-    log "Skipped $skipped existing wallpaper(s)"
-  fi
 
-  if ((count == 0 && skipped == 0)); then
-    warn "No wallpapers could be downloaded"
-    warn "Please check:"
-    warn "  1. URL is correct: $url"
-    warn "  2. Files are named with numbers (1.jpg, 2.png, etc.)"
-    warn "  3. Server allows file access"
-    warn ""
-    warn "Test manually with:"
-    warn "  curl -I $url/1.jpg"
+  # Verify the file is not empty
+  if [[ ! -s "$temp_zip" ]]; then
+    err "Downloaded file is empty"
+    rm -f "$temp_zip" 2>/dev/null || true
     set -e
     return 1
   fi
+
+  # Extract the zip file
+  log "Extracting wallpapers to $dest..."
+  if unzip -q -o "$temp_zip" -d "$dest" 2>/dev/null; then
+    ok "Wallpapers extracted successfully"
+    
+    # Count extracted files
+    local count
+    count=$(find "$dest" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) | wc -l)
+    ok "Found $count wallpaper file(s) in $dest"
+  else
+    err "Failed to extract wallpapers.zip"
+    rm -f "$temp_zip" 2>/dev/null || true
+    set -e
+    return 1
+  fi
+
+  # Clean up temporary zip file
+  rm -f "$temp_zip" 2>/dev/null || true
+  ok "Cleaned up temporary files"
 
   # Re-enable exit on error
   set -e
@@ -427,8 +378,8 @@ for df in "$DEST_DIR"/.*; do
   esac
 done
 
-# 5) Download wallpapers
-download_wallpapers "$WALLPAPER_URL" "$WALLPAPER_DIR"
+# 5) Download and extract wallpapers
+download_and_extract_wallpapers "$WALLPAPER_URL" "$WALLPAPER_DIR"
 
 # 6) Create xinitrc hooks for autostart programs
 log "Creating xinitrc hooks in ~/.config/xinitrc.d/"
@@ -514,7 +465,7 @@ Look&feel installation complete
   - .bash_aliases (from lookandfeel repo)
   - .Xresources, .inputrc, etc.
 - Xinitrc hooks created in ~/.config/xinitrc.d/
-- Wallpapers downloaded to ~/Pictures/Wallpapers
+- Wallpapers downloaded and extracted to ~/Pictures/Wallpapers
 - Protected files (.xinitrc, .bash_profile) were not modified
 
 Repository: $REPO_URL (branch: $BRANCH)
