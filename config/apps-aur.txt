@@ -53,3 +53,4 @@ localsend-bin            # local network file sharing (binary package)
 # zoom                   # video conferencing
 # bitwarden              # password manager
 vscodium-bin             # coding
+reversal-icon-theme-git  # minimal icon style
