@@ -9,6 +9,7 @@
 # - .bashrc and .bash_aliases CAN be installed from repo (with timestamped backup)
 # - Creates xinitrc hooks instead of modifying .xinitrc directly
 # - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
+# - Downloads wallpapers from https://n.rudolfsson.net/dl/wallpapers to ~/Pictures/Wallpapers
 #
 # Design:
 # - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
@@ -16,6 +17,7 @@
 # - Timestamped backups for existing files
 # - Skip missing optional files gracefully
 # - Make installed *.sh executable (755) in ~/.local/bin
+# - Download all wallpapers from remote server
 #
 # Flags:
 #   --repo URL         (default: https://github.com/nirucon/suckless_lookandfeel)
@@ -30,6 +32,8 @@ shopt -s nullglob dotglob
 REPO_URL="https://github.com/nirucon/suckless_lookandfeel"
 BRANCH="main"
 DRY_RUN=0
+WALLPAPER_URL="https://n.rudolfsson.net/dl/wallpapers"
+WALLPAPER_DIR="$HOME/Pictures/Wallpapers"
 
 # ───────── Logging ─────────
 ts() { date +"%Y-%m-%d %H:%M:%S"; }
@@ -44,7 +48,7 @@ die() {
 
 usage() {
   cat <<'EOF'
-install_lookandfeel.sh — Install configs, themes, and scripts
+install_lookandfeel.sh — Install configs, themes, scripts, and wallpapers
 
 USAGE:
   ./install_lookandfeel.sh [options]
@@ -61,6 +65,7 @@ DESIGN:
   • Copies config files to ~/.config/
   • Installs dotfiles (.bashrc, .bash_aliases, etc.) with backup
   • Creates xinitrc hooks (does NOT modify .xinitrc)
+  • Downloads wallpapers to ~/Pictures/Wallpapers
   
 PROTECTED FILES (never overwritten):
   • .xinitrc         (managed by install_suckless.sh)
@@ -190,6 +195,121 @@ mirror_dir_into_config() {
   done < <(find "$base_dir" -type f -print0)
 }
 
+# ───────── Wallpaper download ─────────
+download_wallpapers() {
+  local url="$1"
+  local dest="$2"
+
+  log "==> Downloading wallpapers from $url"
+
+  if ((DRY_RUN == 1)); then
+    log "(dry-run) Would create directory: $dest"
+    log "(dry-run) Would download wallpapers from: $url"
+    return 0
+  fi
+
+  # Create wallpaper directory
+  mkdir -p -- "$dest"
+  ok "Created wallpaper directory: $dest"
+
+  # Check for required tools
+  if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+    warn "Neither wget nor curl found. Skipping wallpaper download."
+    warn "Install wget or curl to enable wallpaper downloads."
+    return 1
+  fi
+
+  # Determine which tool to use
+  local download_tool=""
+  if command -v wget >/dev/null 2>&1; then
+    download_tool="wget"
+  else
+    download_tool="curl"
+  fi
+
+  log "Using $download_tool for downloads"
+
+  # Create temporary file for HTML listing
+  local tmp_html
+  tmp_html="$(mktemp)"
+  trap 'rm -f "$tmp_html"' RETURN
+
+  # Download directory listing
+  log "Fetching wallpaper list from $url..."
+  if [[ "$download_tool" == "wget" ]]; then
+    wget -q -O "$tmp_html" "$url/" || {
+      err "Failed to fetch wallpaper list"
+      return 1
+    }
+  else
+    curl -s -o "$tmp_html" "$url/" || {
+      err "Failed to fetch wallpaper list"
+      return 1
+    }
+  fi
+
+  # Extract image URLs (looking for common image extensions)
+  local -a image_urls=()
+  while IFS= read -r line; do
+    # Match href links to image files
+    if [[ "$line" =~ href=\"([^\"]+\.(jpg|jpeg|png|gif|webp|bmp))\" ]]; then
+      local img="${BASH_REMATCH[1]}"
+      # Remove any leading ./ or /
+      img="${img#./}"
+      img="${img#/}"
+      image_urls+=("$img")
+    fi
+  done < "$tmp_html"
+
+  if ((${#image_urls[@]} == 0)); then
+    warn "No wallpapers found at $url"
+    warn "The server might use a different directory listing format"
+    return 1
+  fi
+
+  log "Found ${#image_urls[@]} wallpaper(s) to download"
+
+  # Download each wallpaper
+  local count=0
+  local skipped=0
+  for img in "${image_urls[@]}"; do
+    local img_url="$url/$img"
+    local img_file="$dest/$(basename -- "$img")"
+
+    # Skip if already exists
+    if [[ -f "$img_file" ]]; then
+      ((skipped++))
+      continue
+    fi
+
+    log "Downloading: $img"
+    if [[ "$download_tool" == "wget" ]]; then
+      if wget -q -O "$img_file" "$img_url"; then
+        ((count++))
+      else
+        warn "Failed to download: $img"
+        rm -f "$img_file"
+      fi
+    else
+      if curl -s -o "$img_file" "$img_url"; then
+        ((count++))
+      else
+        warn "Failed to download: $img"
+        rm -f "$img_file"
+      fi
+    fi
+  done
+
+  if ((count > 0)); then
+    ok "Downloaded $count new wallpaper(s) to $dest"
+  fi
+  if ((skipped > 0)); then
+    log "Skipped $skipped existing wallpaper(s)"
+  fi
+
+  return 0
+}
+
 # ───────── Protected files (managed by other scripts) ─────────
 # .xinitrc is managed by install_suckless.sh (creates minimal template with hooks)
 # .bash_profile is managed by install_apps.sh (adds PATH and EDITOR exports)
@@ -266,7 +386,10 @@ for df in "$DEST_DIR"/.*; do
   esac
 done
 
-# 5) Create xinitrc hooks for autostart programs
+# 5) Download wallpapers
+download_wallpapers "$WALLPAPER_URL" "$WALLPAPER_DIR"
+
+# 6) Create xinitrc hooks for autostart programs
 log "Creating xinitrc hooks in ~/.config/xinitrc.d/"
 
 # Hook for compositor
@@ -327,7 +450,7 @@ chmod +x "$XINITRC_HOOKS/60-polkit.sh"
 
 ok "Created xinitrc hooks (these will be sourced by ~/.xinitrc)"
 
-# 6) PATH notice
+# 7) PATH notice
 case ":$PATH:" in
 *":$HOME/.local/bin:"*) : ;;
 *)
@@ -350,10 +473,12 @@ Look&feel installation complete
   - .bash_aliases (from lookandfeel repo)
   - .Xresources, .inputrc, etc.
 - Xinitrc hooks created in ~/.config/xinitrc.d/
+- Wallpapers downloaded to ~/Pictures/Wallpapers
 - Protected files (.xinitrc, .bash_profile) were not modified
 
 Repository: $REPO_URL (branch: $BRANCH)
 Local cache: $DEST_DIR
+Wallpapers: $WALLPAPER_DIR
 
 Your old dotfiles are backed up as:
   ~/.bashrc.bak.YYYYMMDD_HHMMSS
