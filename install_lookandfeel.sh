@@ -10,7 +10,7 @@
 # - Creates xinitrc hooks instead of modifying .xinitrc directly
 # - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
 # - Downloads wallpapers from https://n.rudolfsson.net/dl/wallpapers to ~/Pictures/Wallpapers
-# - Robust wallpaper download with detailed logging
+# - Fixed error handling to not exit prematurely
 #
 # Design:
 # - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
@@ -26,7 +26,7 @@
 #   --dry-run          (no changes, show actions)
 #   --help             Show help
 
-set -Eeuo pipefail
+set -Eeu pipefail
 shopt -s nullglob dotglob
 
 # ───────── Defaults ─────────
@@ -198,6 +198,9 @@ mirror_dir_into_config() {
 
 # ───────── Wallpaper download ─────────
 download_wallpapers() {
+  # Disable exit on error for this function
+  set +e
+  
   local url="$1"
   local dest="$2"
 
@@ -206,6 +209,7 @@ download_wallpapers() {
   if ((DRY_RUN == 1)); then
     log "(dry-run) Would create directory: $dest"
     log "(dry-run) Would download wallpapers from: $url"
+    set -e
     return 0
   fi
 
@@ -217,6 +221,7 @@ download_wallpapers() {
   if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
     warn "Neither wget nor curl found. Skipping wallpaper download."
     warn "Install wget or curl to enable wallpaper downloads."
+    set -e
     return 1
   fi
 
@@ -238,7 +243,7 @@ download_wallpapers() {
   local extensions=("jpg" "jpeg" "png" "webp")
   local max_attempts=200
   
-  # Try numbered patterns using C-style for loop for better performance
+  # Try numbered patterns using C-style for loop
   local i
   for ((i=1; i<=max_attempts; i++)); do
     local found=0
@@ -252,7 +257,7 @@ download_wallpapers() {
       # Skip if already exists
       if [[ -f "$img_file" ]]; then
         log "  [$i.$ext] Already exists, skipping"
-        ((skipped++))
+        skipped=$((skipped + 1))
         found=1
         break
       fi
@@ -267,16 +272,16 @@ download_wallpapers() {
             # Verify download succeeded and file is not empty
             if [[ -s "$img_file" ]]; then
               ok "  [$i.$ext] Downloaded successfully"
-              ((count++))
+              count=$((count + 1))
               found=1
               break
             else
               warn "  [$i.$ext] Downloaded but file is empty, removing"
-              rm -f "$img_file" 2>/dev/null
+              rm -f "$img_file" 2>/dev/null || true
             fi
           else
             warn "  [$i.$ext] Download failed"
-            rm -f "$img_file" 2>/dev/null
+            rm -f "$img_file" 2>/dev/null || true
           fi
         fi
       else
@@ -288,16 +293,16 @@ download_wallpapers() {
             # Verify download succeeded and file is not empty
             if [[ -s "$img_file" ]]; then
               ok "  [$i.$ext] Downloaded successfully"
-              ((count++))
+              count=$((count + 1))
               found=1
               break
             else
               warn "  [$i.$ext] Downloaded but file is empty, removing"
-              rm -f "$img_file" 2>/dev/null
+              rm -f "$img_file" 2>/dev/null || true
             fi
           else
             warn "  [$i.$ext] Download failed"
-            rm -f "$img_file" 2>/dev/null
+            rm -f "$img_file" 2>/dev/null || true
           fi
         fi
       fi
@@ -305,8 +310,8 @@ download_wallpapers() {
     
     # Count consecutive misses
     if ((found == 0)); then
-      ((stop_count++))
-      # Stop after 20 consecutive misses (enough to skip gaps but not scan forever)
+      stop_count=$((stop_count + 1))
+      # Stop after 20 consecutive misses
       if ((stop_count >= 20)); then
         log "No wallpapers found for 20 consecutive numbers, stopping scan at number $i"
         break
@@ -337,9 +342,12 @@ download_wallpapers() {
     warn ""
     warn "Test manually with:"
     warn "  curl -I $url/1.jpg"
+    set -e
     return 1
   fi
 
+  # Re-enable exit on error
+  set -e
   return 0
 }
 
