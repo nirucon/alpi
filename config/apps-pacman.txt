@@ -96,10 +96,11 @@ btop               # resource monitor
 fastfetch          # system info display
 
 # ============================================================
-# Networking
+# Networking & bluetooth
 # ============================================================
 wireless_tools     # wireless network tools (iwconfig, iwgetid)
 iw                 # nl80211 wireless configuration
+blueman            # bluetooth
 
 # ============================================================
 # Clipboard & Utilities
