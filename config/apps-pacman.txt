@@ -87,6 +87,7 @@ resvg              # SVG rendering library
 7zip               # archive manager
 poppler            # PDF rendering library
 yazi               # terminal file manager
+filezilla          # ftp/sftp
 
 # ============================================================
 # System Monitoring
