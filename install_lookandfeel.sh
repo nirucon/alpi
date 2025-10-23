@@ -10,7 +10,7 @@
 # - Creates xinitrc hooks instead of modifying .xinitrc directly
 # - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
 # - Downloads wallpapers from https://n.rudolfsson.net/dl/wallpapers to ~/Pictures/Wallpapers
-# - Improved wallpaper download with better error handling
+# - Robust wallpaper download with detailed logging
 #
 # Design:
 # - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
@@ -18,7 +18,7 @@
 # - Timestamped backups for existing files
 # - Skip missing optional files gracefully
 # - Make installed *.sh executable (755) in ~/.local/bin
-# - Download all wallpapers from remote server using numbered patterns
+# - Download all numbered wallpapers (1.jpg, 2.png, etc.)
 #
 # Flags:
 #   --repo URL         (default: https://github.com/nirucon/suckless_lookandfeel)
@@ -230,6 +230,7 @@ download_wallpapers() {
 
   log "Using $download_tool for downloads"
   log "Scanning for numbered wallpapers (1.jpg, 2.png, etc.)..."
+  echo ""
   
   local count=0
   local skipped=0
@@ -237,11 +238,13 @@ download_wallpapers() {
   local extensions=("jpg" "jpeg" "png" "webp")
   local max_attempts=200
   
-  # Try numbered patterns (1.jpg, 2.jpg, etc.)
-  for i in $(seq 1 $max_attempts); do
+  # Try numbered patterns using C-style for loop for better performance
+  local i
+  for ((i=1; i<=max_attempts; i++)); do
     local found=0
     
     # Try each extension for this number
+    local ext
     for ext in "${extensions[@]}"; do
       local img_url="$url/$i.$ext"
       local img_file="$dest/$i.$ext"
