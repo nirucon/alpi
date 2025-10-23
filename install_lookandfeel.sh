@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # install_lookandfeel.sh
 #
 # Pulls look&feel assets from a Git repo (default: nirucon/suckless_lookandfeel)
@@ -26,7 +26,7 @@
 #   --dry-run          (no changes, show actions)
 #   --help             Show help
 
-set -Eeu pipefail
+set -eEu -o pipefail
 shopt -s nullglob dotglob
 
 # ───────── Defaults ─────────
