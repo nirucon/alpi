@@ -33,7 +33,7 @@ shopt -s nullglob dotglob
 REPO_URL="https://github.com/nirucon/suckless_lookandfeel"
 BRANCH="main"
 DRY_RUN=0
-WALLPAPER_URL="https://n.rudolfsson.net/dl/wallpapers.zip"
+WALLPAPER_URL="https://n.rudolfsson.net/dl/wallpapers/wallpapers.zip"
 WALLPAPER_DIR="$HOME/Pictures/Wallpapers"
 
 # ───────── Logging ─────────
