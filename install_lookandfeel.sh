@@ -10,7 +10,7 @@
 # - Creates xinitrc hooks instead of modifying .xinitrc directly
 # - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
 # - Downloads wallpapers from https://n.rudolfsson.net/dl/wallpapers to ~/Pictures/Wallpapers
-# - Uses direct numbered pattern download (works without directory listing)
+# - Improved wallpaper download with better error handling
 #
 # Design:
 # - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
@@ -235,65 +235,88 @@ download_wallpapers() {
   local skipped=0
   local stop_count=0
   local extensions=("jpg" "jpeg" "png" "webp")
+  local max_attempts=200
   
-  # Try numbered patterns (1.jpg, 2.jpg, etc.) up to 200
-  for i in {1..200}; do
+  # Try numbered patterns (1.jpg, 2.jpg, etc.)
+  for i in $(seq 1 $max_attempts); do
     local found=0
+    
+    # Try each extension for this number
     for ext in "${extensions[@]}"; do
       local img_url="$url/$i.$ext"
       local img_file="$dest/$i.$ext"
       
       # Skip if already exists
       if [[ -f "$img_file" ]]; then
+        log "  [$i.$ext] Already exists, skipping"
         ((skipped++))
         found=1
         break
       fi
       
-      # Try to download (silent check first, then download if exists)
+      # Try to download
       if [[ "$download_tool" == "wget" ]]; then
         # Check if file exists on server (HEAD request)
         if wget -q --spider "$img_url" 2>/dev/null; then
           # File exists, download it
+          log "  [$i.$ext] Downloading..."
           if wget -q -O "$img_file" "$img_url" 2>/dev/null; then
-            ok "Downloaded: $i.$ext"
-            ((count++))
-            found=1
-            break
+            # Verify download succeeded and file is not empty
+            if [[ -s "$img_file" ]]; then
+              ok "  [$i.$ext] Downloaded successfully"
+              ((count++))
+              found=1
+              break
+            else
+              warn "  [$i.$ext] Downloaded but file is empty, removing"
+              rm -f "$img_file" 2>/dev/null
+            fi
           else
+            warn "  [$i.$ext] Download failed"
             rm -f "$img_file" 2>/dev/null
           fi
         fi
       else
-        # curl approach - check with HEAD, then download
+        # curl approach
         if curl -s -f -I "$img_url" >/dev/null 2>&1; then
           # File exists, download it
+          log "  [$i.$ext] Downloading..."
           if curl -s -f -o "$img_file" "$img_url" 2>/dev/null; then
-            ok "Downloaded: $i.$ext"
-            ((count++))
-            found=1
-            break
+            # Verify download succeeded and file is not empty
+            if [[ -s "$img_file" ]]; then
+              ok "  [$i.$ext] Downloaded successfully"
+              ((count++))
+              found=1
+              break
+            else
+              warn "  [$i.$ext] Downloaded but file is empty, removing"
+              rm -f "$img_file" 2>/dev/null
+            fi
           else
+            warn "  [$i.$ext] Download failed"
             rm -f "$img_file" 2>/dev/null
           fi
         fi
       fi
     done
     
-    # If we haven't found anything for 10 consecutive numbers, stop
+    # Count consecutive misses
     if ((found == 0)); then
       ((stop_count++))
-      if ((stop_count >= 10)); then
-        log "No more wallpapers found (stopped after $i attempts)"
+      # Stop after 20 consecutive misses (enough to skip gaps but not scan forever)
+      if ((stop_count >= 20)); then
+        log "No wallpapers found for 20 consecutive numbers, stopping scan at number $i"
         break
       fi
     else
+      # Reset counter when we find something
       stop_count=0
     fi
   done
 
   echo ""  # Blank line for readability
   
+  # Summary
   if ((count > 0)); then
     ok "Downloaded $count new wallpaper(s) to $dest"
   fi
@@ -307,7 +330,10 @@ download_wallpapers() {
     warn "Please check:"
     warn "  1. URL is correct: $url"
     warn "  2. Files are named with numbers (1.jpg, 2.png, etc.)"
-    warn "  3. Server allows file access (try: curl -I $url/1.jpg)"
+    warn "  3. Server allows file access"
+    warn ""
+    warn "Test manually with:"
+    warn "  curl -I $url/1.jpg"
     return 1
   fi
 
