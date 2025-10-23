@@ -10,6 +10,7 @@
 # - Creates xinitrc hooks instead of modifying .xinitrc directly
 # - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
 # - Downloads wallpapers from https://n.rudolfsson.net/dl/wallpapers to ~/Pictures/Wallpapers
+# - Uses direct numbered pattern download (works without directory listing)
 #
 # Design:
 # - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
@@ -17,7 +18,7 @@
 # - Timestamped backups for existing files
 # - Skip missing optional files gracefully
 # - Make installed *.sh executable (755) in ~/.local/bin
-# - Download all wallpapers from remote server
+# - Download all wallpapers from remote server using numbered patterns
 #
 # Flags:
 #   --repo URL         (default: https://github.com/nirucon/suckless_lookandfeel)
@@ -228,83 +229,86 @@ download_wallpapers() {
   fi
 
   log "Using $download_tool for downloads"
-
-  # Create temporary file for HTML listing
-  local tmp_html
-  tmp_html="$(mktemp)"
-  trap 'rm -f "$tmp_html"' RETURN
-
-  # Download directory listing
-  log "Fetching wallpaper list from $url..."
-  if [[ "$download_tool" == "wget" ]]; then
-    wget -q -O "$tmp_html" "$url/" || {
-      err "Failed to fetch wallpaper list"
-      return 1
-    }
-  else
-    curl -s -o "$tmp_html" "$url/" || {
-      err "Failed to fetch wallpaper list"
-      return 1
-    }
-  fi
-
-  # Extract image URLs (looking for common image extensions)
-  local -a image_urls=()
-  while IFS= read -r line; do
-    # Match href links to image files
-    if [[ "$line" =~ href=\"([^\"]+\.(jpg|jpeg|png|gif|webp|bmp))\" ]]; then
-      local img="${BASH_REMATCH[1]}"
-      # Remove any leading ./ or /
-      img="${img#./}"
-      img="${img#/}"
-      image_urls+=("$img")
-    fi
-  done < "$tmp_html"
-
-  if ((${#image_urls[@]} == 0)); then
-    warn "No wallpapers found at $url"
-    warn "The server might use a different directory listing format"
-    return 1
-  fi
-
-  log "Found ${#image_urls[@]} wallpaper(s) to download"
-
-  # Download each wallpaper
+  log "Scanning for numbered wallpapers (1.jpg, 2.png, etc.)..."
+  
   local count=0
   local skipped=0
-  for img in "${image_urls[@]}"; do
-    local img_url="$url/$img"
-    local img_file="$dest/$(basename -- "$img")"
-
-    # Skip if already exists
-    if [[ -f "$img_file" ]]; then
-      ((skipped++))
-      continue
-    fi
-
-    log "Downloading: $img"
-    if [[ "$download_tool" == "wget" ]]; then
-      if wget -q -O "$img_file" "$img_url"; then
-        ((count++))
+  local stop_count=0
+  local extensions=("jpg" "jpeg" "png" "webp")
+  
+  # Try numbered patterns (1.jpg, 2.jpg, etc.) up to 200
+  for i in {1..200}; do
+    local found=0
+    for ext in "${extensions[@]}"; do
+      local img_url="$url/$i.$ext"
+      local img_file="$dest/$i.$ext"
+      
+      # Skip if already exists
+      if [[ -f "$img_file" ]]; then
+        ((skipped++))
+        found=1
+        break
+      fi
+      
+      # Try to download (silent check first, then download if exists)
+      if [[ "$download_tool" == "wget" ]]; then
+        # Check if file exists on server (HEAD request)
+        if wget -q --spider "$img_url" 2>/dev/null; then
+          # File exists, download it
+          if wget -q -O "$img_file" "$img_url" 2>/dev/null; then
+            ok "Downloaded: $i.$ext"
+            ((count++))
+            found=1
+            break
+          else
+            rm -f "$img_file" 2>/dev/null
+          fi
+        fi
       else
-        warn "Failed to download: $img"
-        rm -f "$img_file"
+        # curl approach - check with HEAD, then download
+        if curl -s -f -I "$img_url" >/dev/null 2>&1; then
+          # File exists, download it
+          if curl -s -f -o "$img_file" "$img_url" 2>/dev/null; then
+            ok "Downloaded: $i.$ext"
+            ((count++))
+            found=1
+            break
+          else
+            rm -f "$img_file" 2>/dev/null
+          fi
+        fi
+      fi
+    done
+    
+    # If we haven't found anything for 10 consecutive numbers, stop
+    if ((found == 0)); then
+      ((stop_count++))
+      if ((stop_count >= 10)); then
+        log "No more wallpapers found (stopped after $i attempts)"
+        break
       fi
     else
-      if curl -s -o "$img_file" "$img_url"; then
-        ((count++))
-      else
-        warn "Failed to download: $img"
-        rm -f "$img_file"
-      fi
+      stop_count=0
     fi
   done
 
+  echo ""  # Blank line for readability
+  
   if ((count > 0)); then
     ok "Downloaded $count new wallpaper(s) to $dest"
   fi
+  
   if ((skipped > 0)); then
     log "Skipped $skipped existing wallpaper(s)"
+  fi
+
+  if ((count == 0 && skipped == 0)); then
+    warn "No wallpapers could be downloaded"
+    warn "Please check:"
+    warn "  1. URL is correct: $url"
+    warn "  2. Files are named with numbers (1.jpg, 2.png, etc.)"
+    warn "  3. Server allows file access (try: curl -I $url/1.jpg)"
+    return 1
   fi
 
   return 0
