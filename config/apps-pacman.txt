@@ -80,6 +80,7 @@ gimp               # image editor
 sxiv               # simple image viewer
 imagemagick        # image manipulation CLI tools
 resvg              # SVG rendering library
+playerctl          # for status bar
 
 # ============================================================
 # File Tools
