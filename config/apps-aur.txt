@@ -34,7 +34,7 @@ xautolock                # automatic screen locker on idle
 # ============================================================
 # System Tools
 # ============================================================
-timeshift-autosnap       # automatic Timeshift snapshots before pacman transactions
+#timeshift-autosnap       # automatic Timeshift snapshots before pacman transactions
 
 # ============================================================
 # File Sharing
