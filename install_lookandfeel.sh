@@ -11,6 +11,7 @@
 # - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
 # - Downloads wallpapers.zip and extracts to ~/Pictures/Wallpapers
 # - Fixed error handling to not exit prematurely
+# - UPDATED: Uses feh instead of nitrogen for wallpaper management
 #
 # Design:
 # - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
@@ -49,7 +50,7 @@ die() {
 
 usage() {
   cat <<'EOF'
-install_lookandfeel.sh — Install configs, themes, scripts, and wallpapers
+install_lookandfeel.sh – Install configs, themes, scripts, and wallpapers
 
 USAGE:
   ./install_lookandfeel.sh [options]
@@ -67,6 +68,7 @@ DESIGN:
   • Installs dotfiles (.bashrc, .bash_aliases, etc.) with backup
   • Creates xinitrc hooks (does NOT modify .xinitrc)
   • Downloads and extracts wallpapers.zip to ~/Pictures/Wallpapers
+  • Uses feh for wallpaper management (replaced nitrogen)
   
 PROTECTED FILES (never overwritten):
   • .xinitrc         (managed by install_suckless.sh)
@@ -394,14 +396,14 @@ command -v picom >/dev/null 2>&1 && picom &
 EOF
 chmod +x "$XINITRC_HOOKS/10-compositor.sh"
 
-# Hook for wallpaper
+# Hook for wallpaper (UPDATED: uses feh instead of nitrogen)
 cat >"$XINITRC_HOOKS/20-wallpaper.sh" <<'EOF'
 #!/bin/sh
-# Wallpaper hook (nitrogen + wallrotate)
+# Wallpaper hook (feh + wallrotate)
 # Created by install_lookandfeel.sh
 
-# Restore last wallpaper
-command -v nitrogen >/dev/null 2>&1 && nitrogen --restore &
+# Restore last wallpaper (if ~/.fehbg exists)
+[ -f "$HOME/.fehbg" ] && "$HOME/.fehbg" &
 
 # Wallpaper rotation script (if installed)
 [ -x "$HOME/.local/bin/wallrotate.sh" ] && "$HOME/.local/bin/wallrotate.sh" &
@@ -467,6 +469,7 @@ Look&feel installation complete
 - Xinitrc hooks created in ~/.config/xinitrc.d/
 - Wallpapers downloaded and extracted to ~/Pictures/Wallpapers
 - Protected files (.xinitrc, .bash_profile) were not modified
+- UPDATED: Now uses feh for wallpaper management (replaced nitrogen)
 
 Repository: $REPO_URL (branch: $BRANCH)
 Local cache: $DEST_DIR
