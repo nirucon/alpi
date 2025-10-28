@@ -1,3 +1,7 @@
+# OLD OLD OLD - NOT UPDATED!
+
+My new version: https://github.com/nirucon/alpi-suckless
+
 # alpi
 
 Post-install scripts for **vanilla Arch Linux** that set up my suckless-based desktop (dwm, st, dmenu, slock, slstatus or custom status bar), look & feel, apps, and a few safe optimizations.  
@@ -10,7 +14,6 @@ Post-install scripts for **vanilla Arch Linux** that set up my suckless-based de
 - Fresh Arch install with `pacman` working
 - A network connection
 - A normal user with `sudo` privileges
-- Interactive TTY if you want to be prompted for Vanilla vs Custom suckless
 
 ## Get started (custom suckless)
 ```bash
