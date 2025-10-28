@@ -4,28 +4,16 @@
 # Pulls look&feel assets from a Git repo (default: nirucon/suckless_lookandfeel)
 # and installs them into sensible locations under $HOME.
 #
-# Changes in this version:
+# NEW in this version:
+# - CLEAR directory structure: repo mirrors where files should go
+# - dotfiles/ -> $HOME (dotfiles like .bashrc, .bash_aliases)
+# - config/ -> ~/.config/ (application configs)
+# - local/bin/ -> ~/.local/bin/ (scripts, made executable)
+# - local/share/ -> ~/.local/share/ (themes, data files)
 # - .xinitrc and .bash_profile are PROTECTED (never overwrite)
-# - .bashrc and .bash_aliases CAN be installed from repo (with timestamped backup)
+# - Timestamped backups for all other files
 # - Creates xinitrc hooks instead of modifying .xinitrc directly
-# - Installs ALL .sh scripts from repo's scripts/ folder to ~/.local/bin/
 # - Downloads wallpapers.zip and extracts to ~/Pictures/Wallpapers
-# - Fixed error handling to not exit prematurely
-# - UPDATED: Uses feh instead of nitrogen for wallpaper management
-#
-# Design:
-# - Clone/update to ~/.cache/alpi/lookandfeel/<branch>
-# - Copy from that repo (NOT from the alpi repo root)
-# - Timestamped backups for existing files
-# - Skip missing optional files gracefully
-# - Make installed *.sh executable (755) in ~/.local/bin
-# - Download and extract wallpapers.zip
-#
-# Flags:
-#   --repo URL         (default: https://github.com/nirucon/suckless_lookandfeel)
-#   --branch NAME      (default: main)
-#   --dry-run          (no changes, show actions)
-#   --help             Show help
 
 set -eEu -o pipefail
 shopt -s nullglob dotglob
@@ -61,24 +49,42 @@ OPTIONS:
   --dry-run          Preview actions without making changes
   --help             Show this help
 
-DESIGN:
-  • Clones repo to ~/.cache/alpi/lookandfeel/<branch>
-  • Installs ALL .sh scripts from scripts/ to ~/.local/bin/
-  • Copies config files to ~/.config/
-  • Installs dotfiles (.bashrc, .bash_aliases, etc.) with backup
-  • Creates xinitrc hooks (does NOT modify .xinitrc)
-  • Downloads and extracts wallpapers.zip to ~/Pictures/Wallpapers
-  • Uses feh for wallpaper management (replaced nitrogen)
+REPOSITORY STRUCTURE:
+  Your lookandfeel repo should follow this structure (it mirrors where files go):
+  
+  suckless_lookandfeel/
+  ├── dotfiles/              -> $HOME/
+  │   ├── .bashrc            -> ~/.bashrc
+  │   ├── .bash_aliases      -> ~/.bash_aliases
+  │   ├── .Xresources        -> ~/.Xresources
+  │   └── .inputrc           -> ~/.inputrc
+  ├── config/                -> ~/.config/
+  │   ├── picom/
+  │   │   └── picom.conf     -> ~/.config/picom/picom.conf
+  │   ├── alacritty/
+  │   │   └── alacritty.toml -> ~/.config/alacritty/alacritty.toml
+  │   ├── dunst/
+  │   │   └── dunstrc        -> ~/.config/dunst/dunstrc
+  │   └── rofi/
+  │       └── config.rasi    -> ~/.config/rofi/config.rasi
+  ├── local/                 -> ~/.local/
+  │   ├── bin/               -> ~/.local/bin/ (made executable)
+  │   │   ├── wallrotate.sh  -> ~/.local/bin/wallrotate.sh (755)
+  │   │   └── dwm-status.sh  -> ~/.local/bin/dwm-status.sh (755)
+  │   └── share/             -> ~/.local/share/
+  │       └── rofi/
+  │           └── themes/
+  │               └── Black-Metal.rasi
+  └── README.md
   
 PROTECTED FILES (never overwritten):
   • .xinitrc         (managed by install_suckless.sh)
   • .bash_profile    (managed by install_apps.sh)
   
-INSTALLABLE WITH BACKUP:
-  • .bashrc          (your custom shell config)
-  • .bash_aliases    (your aliases and functions)
-  • .Xresources      (X11 settings)
-  • .inputrc         (readline config)
+ALL OTHER FILES:
+  • Installed with timestamped backup (.bak.YYYYMMDD_HHMMSS)
+  • Scripts in local/bin/ are made executable (755)
+  • Everything else gets 644 permissions
 
 EXAMPLES:
   ./install_lookandfeel.sh
@@ -140,11 +146,24 @@ fi
 
 log "Using source tree: $DEST_DIR (branch=$BRANCH)"
 
-# ───────── Helpers ─────────
+# ───────── Protected files (managed by other scripts) ─────────
+PROTECTED_FILES=(.xinitrc .bash_profile)
+
+is_protected() {
+  local filename="$1"
+  for protected in "${PROTECTED_FILES[@]}"; do
+    [[ "$filename" == "$protected" ]] && return 0
+  done
+  return 1
+}
+
+# ───────── Core installation functions ─────────
+
 backup_then_install_file() {
   local src="$1" dst="$2" mode="$3"
   local dst_dir
   dst_dir="$(dirname -- "$dst")"
+  
   [[ -f "$src" ]] || {
     warn "Missing source (skipping): $src"
     return 0
@@ -156,52 +175,109 @@ backup_then_install_file() {
   fi
 
   mkdir -p -- "$dst_dir"
+  
   if [[ -e "$dst" ]]; then
-    local ts
-    ts="$(date +%Y%m%d_%H%M%S)"
-    cp -a -- "$dst" "${dst}.bak.${ts}"
-    log "Backup: $dst -> ${dst}.bak.${ts}"
+    local backup_ts
+    backup_ts="$(date +%Y%m%d_%H%M%S)"
+    cp -a -- "$dst" "${dst}.bak.${backup_ts}"
+    log "Backup: $dst -> ${dst}.bak.${backup_ts}"
   fi
+  
   install -m "$mode" "$src" "$dst"
   ok "Installed: $src -> $dst (mode $mode)"
 }
 
-install_sh_to_local_bin() {
-  local from_dir="$1"
-  local files=("$from_dir"/*.sh)
-  ((${#files[@]})) || {
-    log "No *.sh in $from_dir (skipping)."
+# Mirror directory structure from source to destination
+# Usage: mirror_tree SOURCE_DIR DEST_DIR MODE
+# Example: mirror_tree "$DEST_DIR/config" "$HOME/.config" 644
+mirror_tree() {
+  local src_base="$1"
+  local dst_base="$2"
+  local file_mode="$3"
+  
+  [[ -d "$src_base" ]] || {
+    log "No directory: $src_base (skipping)."
     return 0
   }
 
-  mkdir -p -- "$HOME/.local/bin"
-  chmod u+rwx "$HOME/.local/bin"
-
-  log "Installing scripts from $from_dir to ~/.local/bin/"
-  for f in "${files[@]}"; do
-    backup_then_install_file "$f" "$HOME/.local/bin/$(basename -- "$f")" 755
-  done
+  log "Mirroring $src_base -> $dst_base"
+  
+  while IFS= read -r -d '' src_file; do
+    # Get relative path from source base
+    local rel_path="${src_file#$src_base/}"
+    local dst_file="$dst_base/$rel_path"
+    
+    # Check if this is a protected file (only applies to dotfiles)
+    local basename
+    basename="$(basename -- "$src_file")"
+    if [[ "$dst_base" == "$HOME" ]] && is_protected "$basename"; then
+      if [[ -f "$dst_file" ]]; then
+        warn "Protected file exists: $basename (managed by other install scripts)"
+        warn "Skipping to avoid conflicts. To merge manually:"
+        warn "  diff $dst_file $src_file"
+        continue
+      fi
+    fi
+    
+    backup_then_install_file "$src_file" "$dst_file" "$file_mode"
+  done < <(find "$src_base" -type f -print0)
 }
 
-mirror_dir_into_config() {
-  local base_dir="$1"
-  [[ -d "$base_dir" ]] || {
-    log "No directory: $base_dir (skipping)."
+# Install scripts from local/bin/ with executable permissions
+install_local_bin() {
+  local src_dir="$DEST_DIR/local/bin"
+  
+  [[ -d "$src_dir" ]] || {
+    log "No directory: $src_dir (skipping scripts)"
     return 0
   }
 
-  log "Mirroring $base_dir -> ~/.config/"
-  while IFS= read -r -d '' src; do
-    local rel="${src#$base_dir/}"
-    local dst="$HOME/.config/$rel"
-    backup_then_install_file "$src" "$dst" 644
-  done < <(find "$base_dir" -type f -print0)
+  log "Installing scripts from local/bin/ to ~/.local/bin/"
+  mirror_tree "$src_dir" "$HOME/.local/bin" 755
+}
+
+# Install data files from local/share/
+install_local_share() {
+  local src_dir="$DEST_DIR/local/share"
+  
+  [[ -d "$src_dir" ]] || {
+    log "No directory: $src_dir (skipping local/share)"
+    return 0
+  }
+
+  log "Installing data files from local/share/ to ~/.local/share/"
+  mirror_tree "$src_dir" "$HOME/.local/share" 644
+}
+
+# Install config files from config/
+install_config() {
+  local src_dir="$DEST_DIR/config"
+  
+  [[ -d "$src_dir" ]] || {
+    log "No directory: $src_dir (skipping config)"
+    return 0
+  }
+
+  log "Installing config files from config/ to ~/.config/"
+  mirror_tree "$src_dir" "$HOME/.config" 644
+}
+
+# Install dotfiles from dotfiles/
+install_dotfiles() {
+  local src_dir="$DEST_DIR/dotfiles"
+  
+  [[ -d "$src_dir" ]] || {
+    log "No directory: $src_dir (skipping dotfiles)"
+    return 0
+  }
+
+  log "Installing dotfiles from dotfiles/ to ~/"
+  mirror_tree "$src_dir" "$HOME" 644
 }
 
 # ───────── Wallpaper download and extraction ─────────
 download_and_extract_wallpapers() {
-  # Disable exit on error for this function
-  set +e
+  set +e  # Disable exit on error for this function
   
   local url="$1"
   local dest="$2"
@@ -216,26 +292,23 @@ download_and_extract_wallpapers() {
     return 0
   fi
 
-  # Create wallpaper directory
   mkdir -p -- "$dest"
   ok "Created wallpaper directory: $dest"
 
   # Check for required tools
   if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
     warn "Neither wget nor curl found. Skipping wallpaper download."
-    warn "Install wget or curl to enable wallpaper downloads."
     set -e
     return 1
   fi
 
   if ! command -v unzip >/dev/null 2>&1; then
     warn "unzip not found. Skipping wallpaper extraction."
-    warn "Install unzip to enable wallpaper extraction."
     set -e
     return 1
   fi
 
-  # Determine which download tool to use
+  # Determine download tool
   local download_tool=""
   if command -v wget >/dev/null 2>&1; then
     download_tool="wget"
@@ -245,10 +318,9 @@ download_and_extract_wallpapers() {
 
   log "Using $download_tool for downloads"
   
-  # Temporary file for the zip
   local temp_zip="$CACHE_BASE/wallpapers.zip"
   
-  # Download the zip file
+  # Download
   log "Downloading wallpapers.zip..."
   if [[ "$download_tool" == "wget" ]]; then
     if wget -q -O "$temp_zip" "$url" 2>/dev/null; then
@@ -260,7 +332,6 @@ download_and_extract_wallpapers() {
       return 1
     fi
   else
-    # curl approach
     if curl -s -f -o "$temp_zip" "$url" 2>/dev/null; then
       ok "Downloaded wallpapers.zip successfully"
     else
@@ -271,7 +342,7 @@ download_and_extract_wallpapers() {
     fi
   fi
 
-  # Verify the file is not empty
+  # Verify file
   if [[ ! -s "$temp_zip" ]]; then
     err "Downloaded file is empty"
     rm -f "$temp_zip" 2>/dev/null || true
@@ -279,12 +350,11 @@ download_and_extract_wallpapers() {
     return 1
   fi
 
-  # Extract the zip file
+  # Extract
   log "Extracting wallpapers to $dest..."
   if unzip -q -o "$temp_zip" -d "$dest" 2>/dev/null; then
     ok "Wallpapers extracted successfully"
     
-    # Count extracted files
     local count
     count=$(find "$dest" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) | wc -l)
     ok "Found $count wallpaper file(s) in $dest"
@@ -295,95 +365,131 @@ download_and_extract_wallpapers() {
     return 1
   fi
 
-  # Clean up temporary zip file
   rm -f "$temp_zip" 2>/dev/null || true
   ok "Cleaned up temporary files"
 
-  # Re-enable exit on error
   set -e
   return 0
 }
 
-# ───────── Protected files (managed by other scripts) ─────────
-# .xinitrc is managed by install_suckless.sh (creates minimal template with hooks)
-# .bash_profile is managed by install_apps.sh (adds PATH and EDITOR exports)
-# .bashrc and .bash_aliases CAN come from lookandfeel repo (for nirucon users)
-PROTECTED_FILES=(.xinitrc .bash_profile)
+# ───────── Legacy support (backwards compatibility) ─────────
 
-is_protected() {
-  local filename="$1"
-  for protected in "${PROTECTED_FILES[@]}"; do
-    [[ "$filename" == "$protected" ]] && return 0
-  done
-  return 1
+# Check for old repo structure and provide migration guidance
+check_legacy_structure() {
+  local needs_migration=0
+  
+  # Check for files directly in repo root (old style)
+  if [[ -f "$DEST_DIR/.bashrc" ]] || [[ -f "$DEST_DIR/picom.conf" ]]; then
+    needs_migration=1
+  fi
+  
+  # Check for old scripts/ directory (should be local/bin/ now)
+  if [[ -d "$DEST_DIR/scripts" ]] && [[ ! -d "$DEST_DIR/local/bin" ]]; then
+    needs_migration=1
+  fi
+  
+  if ((needs_migration == 1)); then
+    warn "=========================================="
+    warn "OLD REPOSITORY STRUCTURE DETECTED"
+    warn "=========================================="
+    warn "Your repo uses the old structure with files in the root."
+    warn ""
+    warn "For best results, restructure your repo:"
+    warn "  1. Create these directories: dotfiles/, config/, local/bin/, local/share/"
+    warn "  2. Move .bashrc, .bash_aliases etc. -> dotfiles/"
+    warn "  3. Move picom.conf, alacritty.toml etc. -> config/picom/, config/alacritty/"
+    warn "  4. Move scripts/*.sh -> local/bin/"
+    warn "  5. Move themes -> local/share/rofi/themes/"
+    warn ""
+    warn "This script will still work with the old structure (legacy mode)"
+    warn "but the new structure is clearer and more maintainable."
+    warn "=========================================="
+  fi
 }
 
-# ───────── Install from the look&feel repo ─────────
+# Install using legacy structure (for backwards compatibility)
+install_legacy() {
+  log "Using legacy installation mode (old repo structure)"
+  
+  # Old style: dotfiles directly in repo root
+  log "Processing legacy dotfiles from repo root..."
+  for df in "$DEST_DIR"/.*; do
+    local base
+    base="$(basename -- "$df")"
+    [[ -f "$df" ]] || continue
+    [[ "$base" == "." || "$base" == ".." || "$base" =~ ^\.git ]] && continue
+
+    if is_protected "$base"; then
+      if [[ -f "$HOME/$base" ]]; then
+        warn "Protected file exists: $base (skipping)"
+        continue
+      fi
+    fi
+
+    case "$base" in
+    .bashrc | .bash_aliases | .zshrc | .inputrc | .Xresources | .profile)
+      backup_then_install_file "$df" "$HOME/$base" 644
+      ;;
+    esac
+  done
+  
+  # Old style: scripts/ directory
+  if [[ -d "$DEST_DIR/scripts" ]]; then
+    log "Installing scripts from legacy scripts/ directory"
+    mkdir -p "$HOME/.local/bin"
+    for script in "$DEST_DIR/scripts"/*.sh; do
+      [[ -f "$script" ]] || continue
+      backup_then_install_file "$script" "$HOME/.local/bin/$(basename -- "$script")" 755
+    done
+  fi
+  
+  # Old style: specific config files in root
+  declare -A LEGACY_MAP=(
+    ["$DEST_DIR/picom.conf"]="$HOME/.config/picom/picom.conf"
+    ["$DEST_DIR/alacritty.toml"]="$HOME/.config/alacritty/alacritty.toml"
+    ["$DEST_DIR/dunstrc"]="$HOME/.config/dunst/dunstrc"
+    ["$DEST_DIR/Black-Metal.rasi"]="$HOME/.local/share/rofi/themes/Black-Metal.rasi"
+    ["$DEST_DIR/config.rasi"]="$HOME/.config/rofi/config.rasi"
+  )
+  
+  for src in "${!LEGACY_MAP[@]}"; do
+    dst="${LEGACY_MAP[$src]}"
+    [[ -f "$src" ]] && backup_then_install_file "$src" "$dst" 644
+  done
+  
+  # Old style: config/ or .config/ directories
+  [[ -d "$DEST_DIR/config" ]] && mirror_tree "$DEST_DIR/config" "$HOME/.config" 644
+  [[ -d "$DEST_DIR/.config" ]] && mirror_tree "$DEST_DIR/.config" "$HOME/.config" 644
+}
+
+# ───────── Main installation logic ─────────
+
 log "==> Installing from look&feel repository"
 
-# 1) Scripts from repo's scripts/ or bin/ folders
-# ALL .sh files are installed automatically to ~/.local/bin/
-[[ -d "$DEST_DIR/scripts" ]] && install_sh_to_local_bin "$DEST_DIR/scripts"
-[[ -d "$DEST_DIR/bin" ]] && install_sh_to_local_bin "$DEST_DIR/bin"
+# Check if repo uses new structure
+HAS_NEW_STRUCTURE=0
+if [[ -d "$DEST_DIR/dotfiles" ]] || [[ -d "$DEST_DIR/local" ]] || [[ -d "$DEST_DIR/config" ]]; then
+  HAS_NEW_STRUCTURE=1
+fi
 
-# 2) Well-known single-file configs at repo root (optional)
-declare -A SPECIAL_MAP=(
-  ["$DEST_DIR/picom.conf"]="$HOME/.config/picom/picom.conf"
-  ["$DEST_DIR/alacritty.toml"]="$HOME/.config/alacritty/alacritty.toml"
-  ["$DEST_DIR/dunstrc"]="$HOME/.config/dunst/dunstrc"
-  ["$DEST_DIR/Black-Metal.rasi"]="$HOME/.local/share/rofi/themes/Black-Metal.rasi"
-  ["$DEST_DIR/config.rasi"]="$HOME/.config/rofi/config.rasi"
-)
+if ((HAS_NEW_STRUCTURE == 1)); then
+  log "Using new repository structure (recommended)"
+  
+  # Install in order
+  install_dotfiles      # dotfiles/ -> ~/
+  install_config        # config/ -> ~/.config/
+  install_local_bin     # local/bin/ -> ~/.local/bin/ (executable)
+  install_local_share   # local/share/ -> ~/.local/share/
+  
+else
+  check_legacy_structure
+  install_legacy
+fi
 
-for src in "${!SPECIAL_MAP[@]}"; do
-  dst="${SPECIAL_MAP[$src]}"
-  [[ -f "$src" ]] && backup_then_install_file "$src" "$dst" 644 || log "Not found (optional): $src"
-done
-
-# 3) Mirror ./config or ./.config from the look&feel repo into $HOME/.config
-mirror_dir_into_config "$DEST_DIR/config"
-mirror_dir_into_config "$DEST_DIR/.config"
-
-# 4) Copy dotfiles from look&feel repo root into $HOME
-log "Processing dotfiles from repo root..."
-for df in "$DEST_DIR"/.*; do
-  base="$(basename -- "$df")"
-  [[ -f "$df" ]] || continue
-  [[ "$base" == "." || "$base" == ".." || "$base" =~ ^\.git ]] && continue
-
-  # Check if protected (only .xinitrc and .bash_profile)
-  if is_protected "$base"; then
-    if [[ -f "$HOME/$base" ]]; then
-      warn "Protected file exists: $base (managed by other install scripts)"
-      warn "Skipping to avoid conflicts. To merge manually:"
-      warn "  diff $HOME/$base $df"
-      continue
-    fi
-  fi
-
-  # Install dotfiles with backup (including .bashrc and .bash_aliases)
-  case "$base" in
-  .bashrc)
-    log "Installing .bashrc from lookandfeel repo (backup created if exists)"
-    backup_then_install_file "$df" "$HOME/$base" 644
-    ;;
-  .bash_aliases)
-    log "Installing .bash_aliases from lookandfeel repo (backup created if exists)"
-    backup_then_install_file "$df" "$HOME/$base" 644
-    ;;
-  .zshrc | .inputrc | .Xresources | .profile)
-    backup_then_install_file "$df" "$HOME/$base" 644
-    ;;
-  *)
-    log "Skipping unknown dotfile: $base"
-    ;;
-  esac
-done
-
-# 5) Download and extract wallpapers
+# Wallpapers (works for both structures)
 download_and_extract_wallpapers "$WALLPAPER_URL" "$WALLPAPER_DIR"
 
-# 6) Create xinitrc hooks for autostart programs
+# ───────── Create xinitrc hooks ─────────
 log "Creating xinitrc hooks in ~/.config/xinitrc.d/"
 
 # Hook for compositor
@@ -396,7 +502,7 @@ command -v picom >/dev/null 2>&1 && picom &
 EOF
 chmod +x "$XINITRC_HOOKS/10-compositor.sh"
 
-# Hook for wallpaper (UPDATED: uses feh instead of nitrogen)
+# Hook for wallpaper (uses feh)
 cat >"$XINITRC_HOOKS/20-wallpaper.sh" <<'EOF'
 #!/bin/sh
 # Wallpaper hook (feh + wallrotate)
@@ -444,7 +550,7 @@ chmod +x "$XINITRC_HOOKS/60-polkit.sh"
 
 ok "Created xinitrc hooks (these will be sourced by ~/.xinitrc)"
 
-# 7) PATH notice
+# ───────── PATH notice ─────────
 case ":$PATH:" in
 *":$HOME/.local/bin:"*) : ;;
 *)
@@ -455,34 +561,33 @@ case ":$PATH:" in
   ;;
 esac
 
+# ───────── Summary ─────────
 cat <<EOT
 ========================================================
 Look&feel installation complete
 
-- Scripts installed from repo to ~/.local/bin/
-  (ALL .sh files from scripts/ folder are now executable)
+Repository structure: $(((HAS_NEW_STRUCTURE == 1)) && echo "NEW (recommended)" || echo "LEGACY (consider migrating)")
+
+- Dotfiles installed to ~/ with timestamped backups
 - Config files synced to ~/.config/
-- Dotfiles installed with timestamped backups:
-  - .bashrc (from lookandfeel repo)
-  - .bash_aliases (from lookandfeel repo)
-  - .Xresources, .inputrc, etc.
+- Scripts installed to ~/.local/bin/ (made executable)
+- Data files installed to ~/.local/share/
 - Xinitrc hooks created in ~/.config/xinitrc.d/
-- Wallpapers downloaded and extracted to ~/Pictures/Wallpapers
+- Wallpapers downloaded to ~/Pictures/Wallpapers
 - Protected files (.xinitrc, .bash_profile) were not modified
-- UPDATED: Now uses feh for wallpaper management (replaced nitrogen)
 
 Repository: $REPO_URL (branch: $BRANCH)
 Local cache: $DEST_DIR
 Wallpapers: $WALLPAPER_DIR
 
-Your old dotfiles are backed up as:
+Your old files are backed up as:
   ~/.bashrc.bak.YYYYMMDD_HHMMSS
   ~/.bash_aliases.bak.YYYYMMDD_HHMMSS
 
 To update in the future:
   ./alpi.sh --only lookandfeel
   
-To restore old dotfiles:
+To restore old files:
   mv ~/.bashrc.bak.YYYYMMDD_HHMMSS ~/.bashrc
 ========================================================
 EOT
