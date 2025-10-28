@@ -15,7 +15,7 @@
 # ============================================================
 # Desktop Utilities
 # ============================================================
-nitrogen           # wallpaper manager
+feh                # wallpaper manager (minimal, CLI-based)
 arandr             # display layout GUI
 pcmanfm            # lightweight file manager
 gvfs               # virtual filesystem (needed for automount in pcmanfm)
@@ -77,7 +77,7 @@ mpv                # video player
 cmus               # terminal music player
 cava               # audio visualizer
 gimp               # image editor
-sxiv               # simple image viewer
+sxiv               # simple image viewer (used for wallpaper selection)
 imagemagick        # image manipulation CLI tools
 resvg              # SVG rendering library
 playerctl          # for status bar
