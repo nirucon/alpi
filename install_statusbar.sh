@@ -36,7 +36,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 LOCAL_BIN="$HOME/.local/bin"
 XINITRC_HOOKS="$HOME/.config/xinitrc.d"
 LOOKANDFEEL_CACHE="$HOME/.cache/alpi/lookandfeel/main"
-STATUS_SOURCE="$LOOKANDFEEL_CACHE/scripts/dwm-status.sh"
+STATUS_SOURCE="$LOOKANDFEEL_CACHE/local/bin/dwm-status.sh"
 
 # ───────── Defaults / args ─────────
 INSTALL_DEPS=1 # best-effort install of minimal runtime deps
